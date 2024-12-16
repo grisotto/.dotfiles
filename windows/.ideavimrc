@@ -1,0 +1,126 @@
+source ~/.vimrc
+""" Map leader to space ---------------------
+let mapleader=" "
+"use * register
+"set clipboard=+unnamed
+set clipboard+=ideaput
+
+"use + register
+set clipboard+=unnamedplus
+
+
+" " Copy to clipboard
+vnoremap  <leader>y  "zy
+nnoremap  <leader>Y  "zyg_
+nnoremap  <leader>y  "zy
+nnoremap  <leader>yy  "zyy
+
+" " Paste from clipboard
+nnoremap <leader>p "zp
+nnoremap <leader>P "zP
+vnoremap <leader>p "zp
+vnoremap <leader>P "zP
+
+""" Plugins  --------------------------------
+set surround
+set sneak
+
+""" Common settings -------------------------
+set showmode
+set scrolloff=5
+set incsearch
+set number
+set ReplaceWithRegister
+
+""" Idea specific settings ------------------
+set ideajoin
+set ideastatusicon=gray
+set idearefactormode=keep
+set ideajoinset clipboard+=ideaput
+set ideamarks
+set which-key
+" set lookupkeys
+
+""" Mappings --------------------------------
+map <leader>x :action Run<CR>
+map <leader>g :action GotoLine<CR>
+noremap  <c-f> <c-d>
+noremap  <c-b> <c-u>
+" VimMotionJump{Next,Previous}
+nnoremap <c-p> <c-i>
+nnoremap <c-[> <c-t>
+nnoremap <tab> <c-w>w
+
+nnoremap S <nop>
+nnoremap s <nop>
+"nnoremap Y y$
+"nnoremap Q @q
+"nnoremap <c-w><c-c> :action VimFileSaveClose<cr>
+nnoremap [d :action QuickImplementations<cr>
+nnoremap ]d :action QuickImplementations<cr>
+
+"nnoremap gcc :action CommentByLineComment<cr>
+nnoremap <leader>c<space>  :action CommentByLineComment<cr>
+nnoremap zi  :action FoldingGroup<cr>
+
+
+nnoremap <leader>do :action QuickJavaDoc<cr>
+nnoremap <leader>ff :action FindInPath<cr>
+nnoremap <leader>fu :action FindUsages<cr>
+nnoremap <leader>su :action ShowUsages<cr>
+nnoremap <leader>cv :action ChangeView<cr>
+nnoremap <leader>bb :action ToggleLineBreakpoint<cr>
+nnoremap <leader>br :action ViewBreakpoints<cr>
+nnoremap <leader>ic :action InspectCode<cr>
+nnoremap <leader>oi :action OptimizeImports<cr>
+nnoremap <leader>re :action RenameElement<cr>
+nnoremap <leader>rf :action RenameFile<cr>
+nnoremap <leader>gq :action ReformatCode<cr>
+nnoremap <leader>mv :action ActivateMavenProjectsToolWindow<cr>
+nnoremap <leader>dd :action Debug<cr>
+"nnoremap <leader>dc :action ChooseDebugConfiguration<cr>
+nnoremap <leader>rr :action Run<cr>
+nnoremap <leader>rt :action RunClass<cr>
+nnoremap <leader>rc :action ChooseRunConfiguration<cr>
+nnoremap <leader>ga :action GotoAction<cr>
+nnoremap <leader>gi :action GotoImplementation<cr>
+nnoremap <leader>gu :action GotoSuperMethod<cr>
+nnoremap <leader>gd :action GotoDeclaration<cr>
+nnoremap <leader>gD :action GotoDeclaration<cr>
+nnoremap <leader>gt :action GotoTest<cr>
+nnoremap <leader>gr :action GotoRelated<cr>
+nnoremap <leader>gb :action Annotate<cr>
+nnoremap <leader>tl Vy<cr>:action ActivateTerminalToolWindow<cr>
+vnoremap <leader>tl y<cr>:action ActivateTerminalToolWindow<cr>
+nnoremap ]e :action GotoNextError<cr>
+nnoremap [e :action GotoPreviousError<cr>
+
+"nnoremap [q :action VimFileSaveClose<cr>
+
+nnoremap <leader>ii :action ParameterInfo<cr>
+nnoremap <leader>cp :action Compare.SameVersion<cr>
+nnoremap <leader>uu :action UpdateRunningApplication<cr>
+nnoremap <leader>oo :action VimMotionJumpPrevious<cr>
+
+nnoremap <leader>ra :action Refactorings.QuickListPopupAction<CR>
+
+
+" actions
+nmap <leader>h <action>(PreviousTab)
+map <leader>z <Action>(ToggleDistractionFreeMode)
+map <leader>s <Action>(SelectInProjectView)
+map <leader>a <Action>(Annotate)
+map <leader>h <Action>(Vcs.ShowTabbedFileHistory)
+map <S-Space> <Action>(GotoNextError)
+" nmap <leader>ge <action>(Generate)
+nmap <leader>mm <action>(Git.Menu)
+
+nmap <leader>ee <action>(ShowErrorDescription)
+
+map <leader>io <Action>(QuickJavaDoc)
+
+map <leader>fs <Action>(FileStructurePopup)
+map <leader><leader> <Action>(Switcher)
+
+""" Distraction Free Mode
+nnoremap <c-z> :action ToggleDistractionFreeMode<CR>

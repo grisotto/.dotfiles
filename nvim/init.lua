@@ -1,6 +1,8 @@
-vim.g.base46_cache = vim.fn.stdpath "data" .. "/nvchad/base46/"
+vim.g.base46_cache = vim.fn.stdpath "data" .. "/base46/"
 vim.g.mapleader = " "
-vim.g.localmapleader = " "
+vim.g.maplocalleader = " "
+
+local utils = require("utils.git_utils")
 
 -- bootstrap lazy and all plugins
 local lazypath = vim.fn.stdpath "data" .. "/lazy/lazy.nvim"
@@ -48,4 +50,24 @@ vim.api.nvim_create_autocmd({ 'BufEnter' }, {
     end
   end,
 })
+-- Get git link for current line (BETA)
+vim.keymap.set("n", "<localleader>gl", function()
+  local link = utils.get_github_link()
+  vim.fn.setreg("+", link)
+  print(link)
+end, { noremap = true, desc = "Get github/bitbucket link" })
 
+
+local harpoon = require("harpoon")
+-- REQUIRED
+harpoon:setup()
+vim.keymap.set("n", "<leader>a", function() harpoon:list():add() end, {desc = "Add mark to file"})
+vim.keymap.set("n", "<leader>sss", function() harpoon:list():remove() end, {desc = "Remove mark to file"})
+vim.keymap.set("n", "<C-e>", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end, {desc = "Arquivos marcados"})
+
+require'cmp'.setup{
+  sources = {
+    {name = 'conjure'},
+  }
+}
+require'neoscroll'.setup({})

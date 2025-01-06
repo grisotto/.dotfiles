@@ -8,22 +8,22 @@ local fn = vim.fn
 map("n", ";", ":", { desc = "CMD enter command mode" })
 map("i", "jj", "<ESC>")
 
- -- Navigation
-    map('n', ']c', function()
-      if vim.wo.diff then
-        vim.cmd.normal({']c', bang = true})
-      else
-        require("gitsigns").nav_hunk('next')
-      end
-    end, {desc = "Git mover para alteracao anterior"})
+-- Navigation
+map('n', ']c', function()
+  if vim.wo.diff then
+    vim.cmd.normal({']c', bang = true})
+  else
+    require("gitsigns").nav_hunk('next')
+  end
+end, {desc = "Git mover para alteracao anterior"})
 
-    map('n', '[c', function()
-      if vim.wo.diff then
-        vim.cmd.normal({'[c', bang = true})
-      else
-        require("gitsigns").nav_hunk('prev')
-      end
-    end, {desc = "Git mover para proxima alteracao"})
+map('n', '[c', function()
+  if vim.wo.diff then
+    vim.cmd.normal({'[c', bang = true})
+  else
+    require("gitsigns").nav_hunk('prev')
+  end
+end, {desc = "Git mover para proxima alteracao"})
 
 map('n', '<leader>cP', function() require("gitsigns").diffthis('~') end, { desc = "Git diff" })
 map('n', '<leader>cs', require("gitsigns").stage_hunk)
@@ -54,25 +54,54 @@ map('v', '<leader>P', '"zP', { noremap = true, silent = true, desc = "Paste befo
 
 map('n', '<leader>dd', [[:lua OpenChromeWithDebugProfile()<CR>]], { noremap = true, silent = true, desc = "Run Chrome with debug-profile" })
 
+
 function OpenChromeWithDebugProfile()
-    -- Obtém o diretório atual e o nome da pasta do projeto
-    local project_dir = fn.getcwd()
-    local project_name = fn.fnamemodify(project_dir, ":t")
-    local profile_dir = "/mnt/c/Users/RafaelGrisotto/nvim/" .. project_name .. "/Profile-debug"
-    
-    -- Verifica se o diretório existe, e se não, cria
-    if fn.isdirectory(profile_dir) == 0 then
-        fn.mkdir(profile_dir, "p")
-    end
+  -- Obtém o diretório atual e o nome da pasta do projeto
+  local project_dir = fn.getcwd()
+  local project_name = fn.fnamemodify(project_dir, ":t")
+  local profile_dir = "/mnt/c/Users/RafaelGrisotto/nvim/" .. project_name .. "/Profile-debug"
 
-    -- Comando para abrir o Chrome com o perfil específico
-    local chrome_command = [["/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --no-first-run --disable-sync --no-default-browser-check --user-data-dir="]] .. profile_dir .. [[" --profile-directory="deeebug-profile" http://localhost:4202]]
+  -- Verifica se o diretório existe, e se não, cria
+  if fn.isdirectory(profile_dir) == 0 then
+    fn.mkdir(profile_dir, "p")
+  end
 
-    -- Executa o comando diretamente
-    vim.fn.jobstart(chrome_command)
+  -- Comando para abrir o Chrome com o perfil específico
+  local chrome_command = [["/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --no-first-run --disable-sync --no-default-browser-check --user-data-dir="]] .. profile_dir .. [[" --profile-directory="deeebug-profile" http://localhost:4202]]
+
+  -- Executa o comando diretamente
+  vim.fn.jobstart(chrome_command)
 end
 -- """ MOVING AROUND
 -- nnoremap <C-h> <C-w>h
 -- nnoremap <C-j> <C-w>j
 -- nnoremap <C-k> <C-w>k
 -- nnoremap <C-l> <C-w>l
+
+
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(args)
+    local client = vim.lsp.get_client_by_id(args.data.client_id)
+    local bufnr = args.buf
+
+    -- A small helper for setting buffer-local keymaps
+    local function buf_map(mode, lhs, rhs, desc)
+      vim.keymap.set(mode, lhs, rhs, {
+        buffer = bufnr,
+        silent = true,
+        noremap = true,
+        desc = desc,
+      })
+    end
+
+    -- 1) Map `K` to show hover documentation for ALL LSPs
+    buf_map("n", "K", vim.lsp.buf.hover, "LSP Hover Documentation")
+    buf_map("n", "<leader>rS", "<cmd>LspRestart<CR>",          "LSP Restart")
+
+    if client and client.name == "pyright" then
+      -- Example: better-named shortcuts using <leader>p*
+      buf_map("n", "<leader>pO", "<cmd>PyrightOrganizeImports<CR>", "py Organize Imports")
+    end
+  end,
+})
+

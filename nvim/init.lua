@@ -63,11 +63,11 @@ local harpoon = require("harpoon")
 harpoon:setup()
 vim.keymap.set("n", "<leader>a", function() harpoon:list():add() end, {desc = "Add mark to file"})
 vim.keymap.set("n", "<leader>sss", function() harpoon:list():remove() end, {desc = "Remove mark to file"})
-vim.keymap.set("n", "<C-e>", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end, {desc = "Arquivos marcados"})
+vim.keymap.set("n", "<C-e>", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end, {desc = "Arquivos marcados", noremap = true})
 
 require'cmp'.setup{
   sources = {
     {name = 'conjure'},
   }
 }
-require'neoscroll'.setup({})
+require('neoscroll').setup({})

@@ -126,7 +126,7 @@ return {
         local g = vim.g
 
         g.ale_linters = {
-            clojure = {'clj-kondo'}
+            clojure = {'clj-kondo', 'joker'}
         }
     end
 }

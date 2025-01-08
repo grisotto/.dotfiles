@@ -1,1 +1,2 @@
 https://github.com/borkdude/clj-kondo
+https://github.com/clojure-lsp/clojure-lsp

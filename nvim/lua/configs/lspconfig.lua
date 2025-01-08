@@ -13,7 +13,7 @@ end
 local lspconfig = require "lspconfig"
 
 -- EXAMPLE
-local servers = { "html", "cssls", "ts_ls", "angularls", "terraformls", "pyright" }
+local servers = { "html", "cssls", "ts_ls", "angularls", "terraformls", "pyright", "clojure-lsp" }
 local nvlsp = require "nvchad.configs.lspconfig"
 local null_ls = require("null-ls")
 
@@ -74,6 +74,12 @@ lspconfig.pyright.setup{
       },
     },
   },
+}
+
+lspconfig.clojure_lsp.setup {
+  on_attach = nvlsp.on_attach,
+  on_init = nvlsp.on_init,
+  capabilities = nvlsp.capabilities,
 }
 
 

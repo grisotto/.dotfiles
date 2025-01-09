@@ -24,6 +24,10 @@ return {
         "typescript",
         "python",
         "clojure",
+        "java",
+        "dockerfile",
+        "commonlisp",
+        "json"
       },
     },
   },

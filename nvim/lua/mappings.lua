@@ -97,6 +97,13 @@ vim.api.nvim_create_autocmd("LspAttach", {
     -- 1) Map `K` to show hover documentation for ALL LSPs
     buf_map("n", "K", vim.lsp.buf.hover, "LSP Hover Documentation")
     buf_map("n", "<leader>rS", "<cmd>LspRestart<CR>",          "LSP Restart")
+    buf_map("n", "<leader>ln", "<cmd>lua vim.lsp.buf.rename()<CR>", "LSP Rename")
+    buf_map("n", "<leader>le", "<cmd>lua vim.diagnostic.open_float()<CR>", "LSP Show line diagnostics")
+    buf_map("n", "<leader>lf", "<cmd>lua vim.lsp.buf.format()<CR>", "LSP Auto format")
+    buf_map("v", "<leader>la", "<cmd>lua vim.lsp.buf.code_action()<CR> ", "LSP Open code actions menu (Using telescope plugin interface)" )
+    buf_map("n", "<leader>lw", ":lua require('telescope.builtin').diagnostics()<cr>", "LSP Open workspace diagnostics list (Using telescope plugin interface)" )
+    buf_map("n", "<leader>lr", ":lua require('telescope.builtin').lsp_references()<cr>", "LSP Show all references list for an item under the cursor (Using telescope plugin interface)")
+    buf_map("n", "<leader>li", ":lua require('telescope.builtin').lsp_implementations()<cr>", "LSP Show all implementations list for an item under the cursor (Using telescope plugin interface) " )
 
     if client and client.name == "pyright" then
       -- Example: better-named shortcuts using <leader>p*

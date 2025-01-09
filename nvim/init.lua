@@ -1,6 +1,6 @@
 vim.g.base46_cache = vim.fn.stdpath "data" .. "/base46/"
 vim.g.mapleader = " "
-vim.g.maplocalleader = " "
+vim.g.maplocalleader = ","
 
 local utils = require("utils.git_utils")
 
@@ -64,6 +64,8 @@ harpoon:setup()
 vim.keymap.set("n", "<leader>a", function() harpoon:list():add() end, {desc = "Add mark to file"})
 vim.keymap.set("n", "<leader>sss", function() harpoon:list():remove() end, {desc = "Remove mark to file"})
 vim.keymap.set("n", "<C-e>", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end, {desc = "Arquivos marcados", noremap = true})
+
+vim.g["conjure#mapping#doc_word"] = "gk"
 
 require'cmp'.setup{
   sources = {

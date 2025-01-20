@@ -1,0 +1,6 @@
+sudo apt install libcurl4-gnutls-dev
+sudo apt install nvidia-cuda-toolkit
+cmake -B build -DGGML_CUDA=ON -DLLAMA_BUILD_EXAMPLES=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=ON
+export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+

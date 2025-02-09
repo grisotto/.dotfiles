@@ -1,3 +1,11 @@
 https://github.com/borkdude/clj-kondo
 https://github.com/clojure-lsp/clojure-lsp
 https://github.com/candid82/joker
+
+
+~/.local/share/LuaSnips/
+make install_jsregexp
+
+:TInstall query
+
+sudo apt install luarocks

@@ -1,0 +1,165 @@
+-- if true then return {} end -- WARN: REMOVE THIS LINE TO ACTIVATE THIS FILE
+
+-- AstroCore provides a central place to modify mappings, vim options, autocommands, and more!
+-- Configuration documentation can be found with `:h astrocore`
+-- NOTE: We highly recommend setting up the Lua Language Server (`:LspInstall lua_ls`)
+--       as this provides autocomplete and documentation while editing
+
+---@type LazySpec
+return {
+  "AstroNvim/astrocore",
+  ---@type AstroCoreOpts
+  opts = {
+    -- Configure core features of AstroNvim
+    sessions = {
+      -- Configure auto saving
+      autosave = {
+        last = true, -- auto save last session
+        cwd = true, -- auto save session for each working directory
+      },
+      -- Patterns to ignore when saving sessions
+      ignore = {
+        dirs = {}, -- working directories to ignore sessions in
+        filetypes = { "gitcommit", "gitrebase" }, -- filetypes to ignore sessions
+        buftypes = {}, -- buffer types to ignore sessions
+      },
+    },
+    autocmds = {
+      restore_session = {
+        {
+          event = "VimEnter",
+          desc = "Restore previous directory session if neovim opened with no arguments",
+          nested = true, -- trigger other autocommands as buffers open
+          callback = function()
+            -- Only load the session if nvim was started with no args
+            if vim.fn.argc(-1) == 0 then
+              -- try to load a directory session using the current working directory
+              require("resession").load(vim.fn.getcwd(), { dir = "dirsession", silence_errors = true })
+            end
+          end,
+        },
+      },
+    },
+    features = {
+      large_buf = { size = 1024 * 256, lines = 10000 }, -- set global limits for large files for disabling features like treesitter
+      autopairs = true, -- enable autopairs at start
+      cmp = true, -- enable completion at start
+      diagnostics = { virtual_text = true, virtual_lines = false }, -- diagnostic settings on startup
+      highlighturl = true, -- highlight URLs at start
+      notifications = true, -- enable notifications at start
+    },
+    -- Diagnostics configuration (for vim.diagnostics.config({...})) when diagnostics are on
+    diagnostics = {
+      virtual_text = true,
+      underline = true,
+    },
+    -- passed to `vim.filetype.add`
+    filetypes = {
+      -- see `:h vim.filetype.add` for usage
+      extension = {
+        foo = "fooscript",
+      },
+      filename = {
+        [".foorc"] = "fooscript",
+      },
+      pattern = {
+        [".*/etc/foo/.*"] = "fooscript",
+      },
+    },
+    -- vim options can be configured here
+    options = {
+      opt = { -- vim.opt.<key>
+        relativenumber = true, -- sets vim.opt.relativenumber
+        number = true, -- sets vim.opt.number
+        spell = false, -- sets vim.opt.spell
+        signcolumn = "yes", -- sets vim.opt.signcolumn to yes
+        wrap = false, -- sets vim.opt.wrap
+        guifont = "Fira Code:h16", -- neovide font family & size
+      },
+      g = { -- vim.g.<key>
+        -- configure global vim variables (vim.g)
+        -- NOTE: `mapleader` and `maplocalleader` must be set in the AstroNvim opts or before `lazy.setup`
+        -- This can be found in the `lua/lazy_setup.lua` file
+        loaded_perl_provider = 0,
+        loaded_ruby_provider = 0,
+
+        VM_leader = "gm", -- Visual Multi Leader (multiple cursors - user plugin)
+
+        -- Conjure plugin overrides
+        -- comment pattern for eval to comment command
+        ["conjure#eval#comment_prefix"] = ";; ",
+        -- Hightlight evaluated forms
+        ["conjure#highlight#enabled"] = true,
+
+        -- show HUD REPL log at startup
+        ["conjure#log#hud#enabled"] = true,
+
+        -- adicionei mas nao sei se precisa
+        ["conjure#mapping#doc_word"] = "K",
+
+        -- auto repl (babashka)
+        ["conjure#client#clojure#nrepl#connection#auto_repl#enabled"] = false,
+        ["conjure#client#clojure#nrepl#connection#auto_repl#hidden"] = true,
+        ["conjure#client#clojure#nrepl#connection#auto_repl#cmd"] = nil,
+        ["conjure#client#clojure#nrepl#eval#auto_require"] = false,
+
+        -- Test runner: "clojure", "clojuresCRipt", "kaocha"
+        ["conjure#client#clojure#nrepl#test#runner"] = "kaocha",
+
+        -- Troubleshoot: Minimise very long lines slow down:
+        -- ["conjure#log#treesitter"] = false
+        -- ["conjure#log##treesitter"] = false,
+        -- ["conjure#log#disable_diagnostics"] = true
+      },
+    },
+    -- Mappings can be configured through AstroCore as well.
+    -- NOTE: keycodes follow the casing in the vimdocs. For example, `<Leader>` must be capitalized
+    mappings = {
+      -- first key is the mode
+      n = {
+        -- Normal mode clipboard mappings
+        ["<Leader>p"] = false,
+        ["<leader>Y"] = { '"zyg_', desc = "Copy line to clipboard" },
+        ["<leader>y"] = { '"zy', desc = "Copy to clipboard" },
+        ["<leader>yy"] = { '"zyy', desc = "Copy entire line to clipboard" },
+        ["<leader>p"] = { '"zp', desc = "Paste from clipboard" },
+        ["<leader>P"] = { '"zP', desc = "Paste before from clipboard" },
+        -- second key is the lefthand side of the map
+        -- whick-key sub-menu for Visual-Multi Cursors (Multiple Cursors)
+        ["gm"] = { name = "Multiple Cursors" },
+
+        -- Toggle last open buffer
+        ["<Leader><tab>"] = { "<cmd>b#<cr>", desc = "Previous tab" },
+        -- navigate buffer tabs
+        ["]b"] = { function() require("astrocore.buffer").nav(vim.v.count1) end, desc = "Next buffer" },
+        ["[b"] = { function() require("astrocore.buffer").nav(-vim.v.count1) end, desc = "Previous buffer" },
+
+        -- mappings seen under group name "Buffer"
+        ["<Leader>bd"] = {
+          function()
+            require("astroui.status.heirline").buffer_picker(
+              function(bufnr) require("astrocore.buffer").close(bufnr) end
+            )
+          end,
+          desc = "Close buffer from tabline",
+        },
+
+        -- tables with just a `desc` key will be registered with which-key if it's installed
+        -- this is useful for naming menus
+        -- ["<Leader>b"] = { desc = "Buffers" },
+
+        -- setting a mapping to false will disable it
+        -- ["<C-S>"] = false,
+        -- Toggle between src and test (Clojure pack | other-nvim)
+        ["<localLeader>ts"] = { "<cmd>Other<cr>", desc = "Switch src & test" },
+        ["<localLeader>tS"] = { "<cmd>OtherVSplit<cr>", desc = "Switch src & test (Split)" },
+      },
+      v = {
+        -- Visual mode clipboard mappings
+        ["<leader>y"] = { '"zy', desc = "Copy to clipboard in visual mode" },
+        ["<leader>p"] = { '"zp', desc = "Paste from clipboard in visual mode" },
+        ["<leader>P"] = { '"zP', desc = "Paste before in visual mode from clipboard" },
+      },
+    },
+  },
+}

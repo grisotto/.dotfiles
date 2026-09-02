@@ -378,6 +378,12 @@ sim é testado, porque é código nosso.
   desenvolvimento, que não tem filtro por branch documentado. O filtro será
   obtido reabrindo o grafo já restrito à branch escolhida numa busca, e não por
   uma funcionalidade do plugin.
+  - Na execução (`nvi-01m1d6hxabg5`) os dois grafos ficaram ligados ao mesmo
+    tempo, em teclas diferentes: o do painel e o do gitgraph. É o mesmo padrão
+    das apresentações de diff (ADR-0006) — onde havia dúvida real sobre a
+    apresentação, as duas são comparadas em uso. Os dois terminam na mesma
+    chamada, `review.commit`, e o filtro por branch da fatia seguinte é um
+    argumento a mais no `git log` do grafo do painel.
 - Um arquivo conflitado não tem conteúdo no estágio zero do índice, então o diff
   de duas vias do painel não se aplica a ele. É por isso que o Enter num
   conflito vai para o merge tool, e não para o diff comum.

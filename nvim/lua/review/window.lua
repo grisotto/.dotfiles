@@ -11,6 +11,34 @@ local M = {}
 ---@field entry ReviewEntry the file on that line
 ---@field root string absolute path of the repository root
 ---@field panel integer winid of the panel the line was read from
+---@field mode ReviewMode the review the line is part of: the working tree, or a commit
+
+---Whether the release is a click on a line of the list, which is the only
+---release that means anything in one.
+---
+---The press already put the cursor on the right line; what is left to ask is
+---whether the button came up over a line at all. Below the list the editor
+---answers the last line of the buffer — and sends the cursor there too — so
+---without this a click on the empty rows would act on whatever the list
+---happens to end with. What tells the two apart is the row inside the window,
+---which is not clamped to the text. A release outside the window is a drag
+---that ended elsewhere, and means nothing here either.
+---
+---A release carrying no position at all is not a click: `<LeftRelease>` also
+---arrives fed by a script or a macro, and there the list reads its own cursor,
+---like every other key it has.
+---
+---Here rather than in the panel because the graph of commits is the same kind
+---of list, with the same empty rows below it and the same key on a line.
+---@param win integer winid of the list
+---@return boolean
+function M.is_click_on_a_line(win)
+  local mouse = vim.fn.getmousepos()
+  if mouse.winid == 0 then return true end
+  if mouse.winid ~= win then return false end
+  local line = vim.fn.line("w0", win) + mouse.winrow - 1
+  return line <= vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
+end
 
 ---@param panel integer winid
 ---@return integer|nil winid the first window of the tabpage that is not the panel
@@ -43,7 +71,27 @@ function M.content(panel, bufnr)
   return opened
 end
 
----A window to the right of `win`, which is where the second side of a diff goes.
+---What the reviewer has open beside the panel, when it is a file of their own:
+---the buffer of the first ordinary window there that is showing one.
+---
+---It is what a consultation that takes that space has to come back to. Our own
+---buffers are never it — a side of a diff, the graph, the file read in another
+---rev: they are wiped when they leave the screen, so there is nothing in them
+---to come back to.
+---@param panel integer winid
+---@return integer|nil bufnr
+function M.file_beside(panel)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if win ~= panel and vim.api.nvim_win_get_config(win).relative == "" then
+      local bufnr = vim.api.nvim_win_get_buf(win)
+      if vim.bo[bufnr].buftype == "" then return bufnr end
+    end
+  end
+end
+
+---A window to the right of `win`, which is where the next side of a diff goes:
+---the second of two, and the second and third of the three versions of a
+---conflict.
 ---@param win integer winid
 ---@param bufnr integer
 ---@return integer winid

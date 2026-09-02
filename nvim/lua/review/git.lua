@@ -11,7 +11,7 @@
 ---broken line — and only the new path is ever shown.
 local M = {}
 
----@alias ReviewSection "conflicts"|"staged"|"unstaged"|"untracked"
+---@alias ReviewSection "conflicts"|"staged"|"unstaged"|"untracked"|"commit"
 
 ---@class ReviewEntry
 ---@field section ReviewSection
@@ -19,14 +19,21 @@ local M = {}
 ---@field path string path relative to the repository root
 ---@field orig_path string|nil the path a renamed file came from
 ---@field content string|nil key of the content this entry puts under review
+---@field rev string|nil rev the change is read from; absent in the working tree
+---@field base string|nil rev it is read against; absent in the working tree
 
 ---@class ReviewStatus
 ---@field root string absolute path of the repository root
----@field branch string current branch, or "(detached)"
+---@field title string what the panel says it is listing: the branch, the commit,
+---or the range
+---@field rev string|nil the commit being listed — the newest of a range;
+---absent in the working tree
+---@field range { oldest: string, newest: string }|nil the two ends of the range
+---being listed, when what is listed is one
 ---@field has_commits boolean false in a repository where nothing was committed
 ---@field entries ReviewEntry[]
 
----@alias ReviewGitFailure "not_a_repo"|"git_failed"
+---@alias ReviewGitFailure "not_a_repo"|"git_failed"|"no_such_rev"
 
 ---How long the editor is willing to sit blocked on git. Reading the status is
 ---synchronous, so without a bound a repository with a huge untracked tree —
@@ -40,9 +47,14 @@ local TIMEOUT_MS = 10000
 ---@return vim.SystemCompleted
 local function git(args, cwd) return vim.system(vim.list_extend({ "git" }, args), { cwd = cwd }):wait(TIMEOUT_MS) end
 
----What a record carries where an object name would be, when there is no object
----— the index side of a staged deletion, for one.
-local NO_OBJECT = ("0"):rep(40)
+---Whether a record carries no object where an object name would be — the index
+---side of a staged deletion, for one. Git writes it as an object name of all
+---zeroes, as long as object names are in this repository: the length is the
+---hash's, not a constant, and a repository on SHA-256 writes sixty-four of
+---them.
+---@param name string
+---@return boolean
+local function is_no_object(name) return name:match "^0+$" ~= nil end
 
 ---The key of a deletion. It cannot be the content of the file, because there
 ---is none; it is the identity of what was removed, so that the same removal
@@ -70,7 +82,7 @@ local function add_changed(entries, xy, head, index, path, orig_path)
       status = index_status,
       path = path,
       orig_path = orig_path,
-      content = index ~= NO_OBJECT and index or removal_of(head),
+      content = not is_no_object(index) and index or removal_of(head),
     }
   end
   if worktree_status ~= "." then
@@ -127,6 +139,70 @@ local function parse(output)
   return { branch = branch, has_commits = has_commits, entries = entries }
 end
 
+---Split one record of `git diff-tree -r -z --raw` into the entry it produces.
+---
+---The raw format is the one that names the objects on both sides, which is
+---what makes a commit readable without hashing anything: the object on the
+---right *is* the content this entry puts under review, so the mark left on it
+---is the same mark the working tree gets for the same text (ADR-0002). The
+---name-status format would have cost one `hash-object` per file to arrive at
+---the same keys.
+---@param entries ReviewEntry[]
+---@param before string object name on the left, all zeroes when the file is new
+---@param after string object name on the right, all zeroes when it is gone
+---@param status string the letter, with the score a rename carries
+---@param path string
+---@param orig_path string|nil
+---@param rev string the commit being read — the newest end, in a range
+---@param base string the rev it is being read against
+local function add_committed(entries, before, after, status, path, orig_path, rev, base)
+  entries[#entries + 1] = {
+    section = "commit",
+    -- Short of the score: `R100` in the column the other sections fill with one
+    -- letter would push every path of the list one column to the right.
+    status = status:sub(1, 1),
+    path = path,
+    orig_path = orig_path,
+    content = not is_no_object(after) and after or removal_of(before),
+    rev = rev,
+    base = base,
+  }
+end
+
+---@param output string the NUL-separated output of `git diff-tree -r -z --raw`
+---@param rev string the commit it was read from — the newest end, in a range
+---@param base string the rev it was read against
+---@return ReviewEntry[]
+local function parse_commit(output, rev, base)
+  local fields = vim.split(output, "\0", { plain = true })
+  local entries = {}
+
+  local index = 1
+  while index <= #fields do
+    local field = fields[index]
+    index = index + 1
+    -- `:<mode before> <mode after> <object before> <object after> <status>`,
+    -- with the paths in the fields that follow.
+    local before, after, status = field:match "^:%S+ %S+ (%S+) (%S+) (%S+)$"
+    if status then
+      local path = fields[index]
+      index = index + 1
+      -- A rename and a copy name two paths, the old one first. Consumed as
+      -- part of the record it belongs to, the way the rename record of the
+      -- status is: read as a record of its own it would render a broken line.
+      local orig_path = nil
+      local kind = status:sub(1, 1)
+      if kind == "R" or kind == "C" then
+        orig_path, path = path, fields[index]
+        index = index + 1
+      end
+      if path then add_committed(entries, before, after, status, path, orig_path, rev, base) end
+    end
+  end
+
+  return entries
+end
+
 ---Identify the content of the entries git left unidentified: the ones under
 ---review as the file on disk — an unstaged change, an untracked file, a
 ---conflict. All of them in a single process, because this runs on every draw
@@ -158,6 +234,15 @@ local function identify(root, entries)
     local hash = hashes[position[entry.path]]
     if hash and hash ~= "" then entry.content = hash end
   end
+end
+
+---Where the repository containing `cwd` begins.
+---@param cwd string absolute path of a directory
+---@return string|nil root nil when `cwd` is not inside a repository
+function M.root(cwd)
+  local result = git({ "rev-parse", "--show-toplevel" }, cwd)
+  if result.code ~= 0 then return nil end
+  return vim.trim(result.stdout or "")
 end
 
 ---Read a path as it is in a rev: `HEAD` for the last commit, `:0` for the
@@ -260,8 +345,8 @@ end
 ---@return ReviewGitFailure|nil failure
 ---@return string|nil detail git's own error message
 function M.status(cwd)
-  local toplevel = git({ "rev-parse", "--show-toplevel" }, cwd)
-  if toplevel.code ~= 0 then return nil, "not_a_repo" end
+  local root = M.root(cwd)
+  if not root then return nil, "not_a_repo" end
 
   -- `--branch` is what carries the branch name and whether HEAD exists yet, so
   -- nothing here has to ask for HEAD and fail in a repository without commits.
@@ -273,14 +358,318 @@ function M.status(cwd)
   if result.code ~= 0 then return nil, "git_failed", vim.trim(result.stderr or "") end
 
   local parsed = parse(result.stdout or "")
-  local root = vim.trim(toplevel.stdout or "")
   identify(root, parsed.entries)
   return {
     root = root,
-    branch = parsed.branch,
+    title = parsed.branch,
     has_commits = parsed.has_commits,
     entries = parsed.entries,
   }
+end
+
+---Read the files of one commit, the way the panel lists them in commit mode.
+---
+---Two processes, whatever the commit has in it: one for what identifies the
+---commit and one for its files. The second is `diff-tree` and not `show`
+---because only the raw format names the objects, and those are the keys the
+---marks are left under.
+---
+---What a merge shows is what it brought in against its first parent, which is
+---what there is to review in one — `diff-tree` left alone says a merge changed
+---nothing at all, and a panel that answered "Nenhuma mudança" for every merge
+---of the graph would look broken. `--diff-merges=first-parent` and not
+---`-m --first-parent`: the second is a limit on which commits are walked, not
+---on which parent the merge is compared against, and it lists the change twice
+---— once against each parent — in a commit that has two.
+---@param root string absolute path of the repository root
+---@param rev string anything git resolves to a commit
+---@return ReviewStatus|nil status
+---@return ReviewGitFailure|nil failure
+---@return string|nil detail git's own error message
+function M.commit_status(root, rev)
+  local described = git({ "show", "--no-patch", "--format=%H%x00%h%x00%s", rev }, root)
+  if described.code ~= 0 then return nil, "no_such_rev", vim.trim(described.stderr or "") end
+  local sha, short, subject = unpack(vim.split(vim.trim(described.stdout or ""), "\0", { plain = true }))
+  if not sha or sha == "" then return nil, "no_such_rev" end
+
+  -- `--root` so the first commit of the repository lists what it added instead
+  -- of nothing: it has no parent to be diffed against, and that is exactly the
+  -- commit a reviewer opens the graph at the bottom to read.
+  local listed = git({
+    "diff-tree",
+    "-r",
+    "-z",
+    "--no-abbrev",
+    "--no-commit-id",
+    "--find-renames",
+    "--root",
+    "--diff-merges=first-parent",
+    sha,
+  }, root)
+  if listed.code ~= 0 then return nil, "git_failed", vim.trim(listed.stderr or "") end
+
+  return {
+    root = root,
+    title = ("%s %s"):format(short, subject),
+    rev = sha,
+    has_commits = true,
+    -- What the commit is read against is what it changed: its first parent. A
+    -- commit that has none — the first of the repository — leaves this rev
+    -- unresolvable, which is an empty left side and not a failure.
+    entries = parse_commit(listed.stdout or "", sha, sha .. "^"),
+  }
+end
+
+---The object name of the empty tree, which is what a range that reaches the
+---first commit of the repository starts from: that commit has no parent to be
+---compared against, and comparing against nothing is comparing against the
+---tree with nothing in it. Asked of git rather than written here as a constant,
+---because it is the hash of this repository — forty hex digits on SHA-1,
+---sixty-four on SHA-256 — and nothing is written to the object database to
+---answer it.
+---@param root string
+---@return string|nil
+local function empty_tree(root)
+  local result = git({ "hash-object", "-t", "tree", "/dev/null" }, root)
+  if result.code ~= 0 then return nil end
+  return vim.trim(result.stdout or "")
+end
+
+---Whether one commit is on the way to the other, which is what makes two
+---commits the ends of a range at all.
+---
+---The graph draws every branch, so two lines next to each other on screen are
+---not necessarily on the same line of history: the commits of a branch and the
+---ones of another are drawn side by side. Comparing two divergent tips answers
+---with everything that differs between the branches, which is not the range
+---anybody meant to select.
+---
+---Asked of git on the gesture and not on every draw, the same way the panel
+---asks whether the repository has a HEAD before it offers to restore from it.
+---@param root string absolute path of the repository root
+---@param oldest string
+---@param newest string
+---@return boolean
+function M.is_ancestor(root, oldest, newest)
+  return git({ "merge-base", "--is-ancestor", oldest, newest }, root).code == 0
+end
+
+---Read the files of a range of commits, the way the panel lists them when the
+---reviewer selected more than one line of the graph.
+---
+---What a range shows is its net change: the two trees at the ends compared
+---directly, which is what `A..B` means in git and what reviewing a whole
+---feature at once asks for. A file created inside the range and gone by the end
+---of it is not in the list, because there is nothing left in it to read.
+---
+---That also settles the merges the range walks over: a comparison of two trees
+---has no commit in it to have parents, so nothing has to be said about which
+---parent a merge is read against.
+---@param root string absolute path of the repository root
+---@param oldest string the commit the range starts at, itself included
+---@param newest string the commit it ends at
+---@return ReviewStatus|nil status
+---@return ReviewGitFailure|nil failure
+---@return string|nil detail git's own error message
+function M.range_status(root, oldest, newest)
+  -- One process for both ends: `show` writes a record per rev it is given.
+  local described = git({ "show", "--no-patch", "--format=%H%x00%h", oldest, newest }, root)
+  if described.code ~= 0 then return nil, "no_such_rev", vim.trim(described.stderr or "") end
+  local records = vim.split(vim.trim(described.stdout or ""), "\n", { plain = true })
+  local from = vim.split(records[1] or "", "\0", { plain = true })
+  -- A range of one rev is described once: both ends are the same commit.
+  local to = vim.split(records[2] or records[1] or "", "\0", { plain = true })
+  if not from[1] or from[1] == "" or not to[1] or to[1] == "" then return nil, "no_such_rev" end
+
+  -- The range starts before its oldest commit, so that commit's own change is
+  -- part of what is being reviewed.
+  local base = from[1] .. "^"
+  -- How many commits the range holds, which is what says a whole feature is on
+  -- the list. It is also what asks git whether the range has a beginning at
+  -- all: a `^` that does not resolve fails the count, and saves this from
+  -- having to ask about the parent in a process of its own.
+  local starts_at = base
+  local counted = git({ "rev-list", "--count", ("%s..%s"):format(base, to[1]) }, root)
+  if counted.code ~= 0 then
+    -- The oldest commit of the range is the first of the repository, and there
+    -- is nothing before it for the range to start at.
+    starts_at = empty_tree(root)
+    counted = git({ "rev-list", "--count", to[1] }, root)
+  end
+  if not starts_at or counted.code ~= 0 then return nil, "git_failed", vim.trim(counted.stderr or "") end
+  local commits = tonumber(vim.trim(counted.stdout or "")) or 0
+
+  local listed = git({ "diff-tree", "-r", "-z", "--no-abbrev", "--find-renames", starts_at, to[1] }, root)
+  if listed.code ~= 0 then return nil, "git_failed", vim.trim(listed.stderr or "") end
+
+  return {
+    root = root,
+    -- Written the way git would be given it, `^` included: `a..b` excludes `a`
+    -- to anyone who reads git, and this range does not — the oldest commit is
+    -- part of what is being reviewed. It is also the rev the left side of every
+    -- diff of this range is named after, so the header and the buffer beside it
+    -- say the same thing.
+    title = ("%s^..%s · %d %s"):format(from[2], to[2], commits, commits == 1 and "commit" or "commits"),
+    rev = to[1],
+    range = { oldest = from[1], newest = to[1] },
+    has_commits = true,
+    -- Read against the parent of the oldest commit, and not against the tree
+    -- the comparison used: the empty tree is how git is asked for "everything
+    -- there is", and `<sha>^` is what the reviewer reads on the side of the
+    -- diff — the same unresolvable rev a first commit shows, and the same empty
+    -- side.
+    entries = parse_commit(listed.stdout or "", to[1], base),
+  }
+end
+
+---The branches the graph can be restricted to, most recently worked on first,
+---which is the order a reviewer looks for one in.
+---
+---The remote ones too: the branch a reviewer goes looking for is often someone
+---else's, and it is in the repository already. What is left out is the pointer
+---git keeps to a remote's default branch — `refs/remotes/origin/HEAD` is not a
+---branch to review, it is the name of another one.
+---
+---Which is why the whole ref name is read beside the short one: git shortens
+---that pointer to `origin`, with no `HEAD` left in it to recognise it by, and a
+---search offering "origin" would be offering a branch that does not exist under
+---that name.
+---@param root string absolute path of the repository root
+---@return string[]|nil branches nil when git could not be read
+function M.branches(root)
+  local result = git({
+    "branch",
+    "--all",
+    "--format=%(refname)%00%(refname:short)",
+    "--sort=-committerdate",
+  }, root)
+  if result.code ~= 0 then return nil end
+
+  local branches = {}
+  for _, line in ipairs(vim.split(vim.trim(result.stdout or ""), "\n", { plain = true })) do
+    local ref, name = unpack(vim.split(line, "\0", { plain = true }))
+    if name and name ~= "" and not vim.endswith(ref, "/HEAD") then branches[#branches + 1] = name end
+  end
+  return branches
+end
+
+---@class ReviewRevChoice one rev the search offers
+---@field label string as the reviewer reads it in the list
+---@field rev string as git is given it
+
+---The revs one file can be read at: the branches of the repository, and the
+---commits that touched that file, newest first.
+---
+---The branches come first because they are few and always the same, and a
+---search that buried them under the history of the file would be a search
+---where they cannot be reached at all. What identifies a commit in the list is
+---the short sha, the date and the subject — the same fields the graph draws —
+---so that nobody has to type a sha.
+---
+---A renamed file is asked for under both of its names: its history is under the
+---old one up to the rename, and a search offering nothing at all — which is
+---what the new name alone answers for a rename that is not committed yet — is
+---the one answer that is certainly wrong.
+---
+---A `git log` that fails is a file with no commits behind it — an untracked
+---one, or a repository where nothing was ever committed — and the branches
+---alone are still an answer. What is not an answer is a repository git could
+---not be read from at all, which is what nil means here.
+---@param root string absolute path of the repository root
+---@param entry ReviewEntry the file the search is about
+---@param limit integer how many commits of the file to read at most
+---@return ReviewRevChoice[]|nil choices nil when git could not be read
+function M.revs_of(root, entry, limit)
+  local branches = M.branches(root)
+  if not branches then return nil end
+
+  local choices = {}
+  for _, branch in ipairs(branches) do
+    choices[#choices + 1] = { label = branch, rev = branch }
+  end
+
+  -- Nothing after the separator but the paths, so a file whose name is also a
+  -- rev is read as the path it is.
+  local args = {
+    "log",
+    "--date=short",
+    "--format=%H%x00%h%x00%ad%x00%s",
+    "--max-count=" .. limit,
+    "--",
+    entry.path,
+  }
+  if entry.orig_path then args[#args + 1] = entry.orig_path end
+
+  local result = git(args, root)
+  if result.code ~= 0 then return choices end
+
+  for _, line in ipairs(vim.split(vim.trim(result.stdout or ""), "\n", { plain = true })) do
+    local sha, short, date, subject = unpack(vim.split(line, "\0", { plain = true }))
+    if sha and sha ~= "" then
+      choices[#choices + 1] = { label = ("%s %s %s"):format(short, date, subject), rev = sha }
+    end
+  end
+  return choices
+end
+
+---@class ReviewLogEntry one line of the graph
+---@field sha string|nil the full object name; absent on a line that only draws
+---@field graph string the lines and corners git drew, which is the line itself
+---when there is no commit on it
+---@field short string|nil
+---@field date string|nil
+---@field refs string|nil the branches and tags pointing here, empty when none
+---@field subject string|nil
+
+---Read the commits of the repository as a graph, newest first.
+---
+---Bounded, because this is read into a buffer in one go and a repository with
+---a hundred thousand commits would freeze the editor for as long as git takes
+---to walk it — the same reason the calls here have a timeout at all. What the
+---bound cuts off is the oldest end, which is not where a reviewer is looking.
+---@param root string absolute path of the repository root
+---@param opts { branch: string|nil, limit: integer } `branch` walks that one
+---alone, which is what the filter is made of; without it, every branch is
+---walked
+---@return ReviewLogEntry[]|nil entries nil when git could not be read
+function M.log(root, opts)
+  local args = { "log", "--graph", "--date=short", "--format=%H%x00%h%x00%ad%x00%d%x00%s" }
+  args[#args + 1] = opts.branch or "--all"
+  args[#args + 1] = "--max-count=" .. opts.limit
+  -- Nothing after the separator, so a branch whose name is also a path in the
+  -- repository is read as the rev it is, instead of git refusing an argument it
+  -- cannot tell apart.
+  args[#args + 1] = "--"
+
+  local result = git(args, root)
+  if result.code ~= 0 then return nil end
+
+  local entries = {}
+  for _, line in ipairs(vim.split(result.stdout or "", "\n", { plain = true })) do
+    local fields = vim.split(line, "\0", { plain = true })
+    -- The lines git draws between two commits carry no commit of their own,
+    -- and the object name is what tells them apart: it is the first thing the
+    -- format writes, so what ends in one is a line to select and what does not
+    -- is a line that only draws. Read as the run of hex the line ends with,
+    -- and not as its last forty characters: nothing git draws — `*`, `|`, `/`,
+    -- `\`, `_`, a space — is a hex digit, and the name is as long as this
+    -- repository's hash, which on SHA-256 is sixty-four.
+    local graph, sha = fields[1]:match "^(.-)(%x+)$"
+    if #fields > 1 and sha then
+      entries[#entries + 1] = {
+        sha = sha,
+        graph = graph,
+        short = fields[2] or "",
+        date = fields[3] or "",
+        refs = fields[4] or "",
+        subject = fields[5] or "",
+      }
+    elseif line ~= "" then
+      entries[#entries + 1] = { graph = line }
+    end
+  end
+
+  return entries
 end
 
 return M

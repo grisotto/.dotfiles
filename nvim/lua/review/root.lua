@@ -1,4 +1,4 @@
----Where a file's project begins.
+---Where a file's project begins, and how a path is written from a root.
 ---
 ---Nothing is detected here. The editor already has a root detector — the
 ---astrocore rooter, which asks the language servers of the file first and
@@ -59,6 +59,19 @@ function M.project(path)
   -- changing until a path came out wrong.
   local root = vim.tbl_get(detected, 1, "paths", 1)
   return type(root) == "string" and root or nil
+end
+
+---A path under `directory`, written from it. Tried again through symlinks
+---before giving up: the two come from different places — git's own answer, the
+---root detector's, the name a file was opened under — and one symlink on the
+---way to the repository is enough for the same directory to arrive here
+---written two ways.
+---@param directory string absolute path
+---@param path string absolute path
+---@return string|nil relative nil when `path` is not under `directory`
+function M.relative_to(directory, path)
+  return vim.fs.relpath(directory, path)
+    or vim.fs.relpath(vim.uv.fs_realpath(directory) or directory, vim.uv.fs_realpath(path) or path)
 end
 
 return M

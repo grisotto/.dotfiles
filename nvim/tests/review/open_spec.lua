@@ -1,4 +1,5 @@
 local diff = require "tests.helpers.diff"
+local editor = require "tests.helpers.editor"
 local fixture = require "tests.helpers.fixture"
 local panel = require "tests.helpers.panel"
 local review = require "review"
@@ -33,25 +34,11 @@ local function open_in_new_tab(dir)
   review.open()
 end
 
----Leave the editor with a single empty window in a single tabpage and no
----leftover file buffers, so a diff or a file opened by one test cannot reach
----the next one.
-local function reset_editor()
-  review.close()
-  vim.cmd "tabonly!"
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if win ~= vim.api.nvim_get_current_win() then pcall(vim.api.nvim_win_close, win, true) end
-  end
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.bo[buf].filetype ~= "review" then pcall(vim.api.nvim_buf_delete, buf, { force = true }) end
-  end
-end
-
 describe("abrir o que está na linha", function()
   before_each(function() review.setup {} end)
 
   after_each(function()
-    reset_editor()
+    editor.reset()
     -- `cd`, not `chdir`: a tabpage local directory of a test would otherwise
     -- outlive it.
     vim.cmd.cd(vim.fn.fnameescape(config_root))
@@ -186,6 +173,20 @@ describe("abrir o que está na linha", function()
       assert.equals(3, window_count())
     end)
 
+    it("continua nomeando os dois lados ao abrir o mesmo diff de novo", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "no head\n")
+      repo:write("a.txt", "no indice\n")
+      repo:add "a.txt"
+
+      open_in(repo.root)
+      panel.focus("Staged", "a%.txt")
+      panel.feed "<CR>"
+      panel.feed "<CR>"
+
+      assert.same({ "review://HEAD/a.txt", "review://índice/a.txt" }, diff.names())
+    end)
+
     it("não desmonta o diff da outra aba", function()
       -- Uma aba por repositório: o diff que o painel de uma aba montou não é o
       -- diff que o painel da outra substitui.
@@ -232,6 +233,120 @@ describe("abrir o que está na linha", function()
 
       assert.has_no.errors(function() panel.feed "<CR>" end)
       assert.same({}, diff.sides())
+    end)
+
+    it("a apresentação alternativa não monta diff nosso, nem estoura sem o diffview", function()
+      -- Ela é do diffview (ADR-0005), que não está no runtimepath da suíte.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "v1\n")
+      repo:write("a.txt", "v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+
+      assert.has_no.errors(function() panel.feed "d" end)
+      assert.same({}, diff.sides())
+    end)
+  end)
+
+  describe("as três versões de um conflito", function()
+    it("abre a nossa, a base e a que está entrando, lado a lado", function()
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+
+      assert.same({ { "atual" }, { "base" }, { "entrando" } }, diff.sides())
+    end)
+
+    it("abre na aba do painel, com a lista ainda visível ao lado", function()
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+      local tabpage = vim.api.nvim_get_current_tabpage()
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+
+      assert.equals(tabpage, vim.api.nvim_get_current_tabpage())
+      assert.equals(1, #vim.api.nvim_list_tabpages())
+      assert.is_true(panel.is_open())
+      assert.equals(4, window_count())
+    end)
+
+    it("nomeia cada versão, que é como o revisor as distingue", function()
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+
+      assert.same({
+        "review://atual/conflito.txt",
+        "review://base/conflito.txt",
+        "review://entrando/conflito.txt",
+      }, diff.names())
+    end)
+
+    it("continua nomeando cada versão ao abrir o mesmo conflito de novo", function()
+      -- As três só se distinguem pelo nome, e o nome de um buffer é único no
+      -- editor: as versões de antes têm que sair da frente antes das novas.
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+      panel.feed "D"
+
+      assert.same({
+        "review://atual/conflito.txt",
+        "review://base/conflito.txt",
+        "review://entrando/conflito.txt",
+      }, diff.names())
+    end)
+
+    it("mostra um lado vazio no conflito que não tem base", function()
+      -- Os dois lados criaram o arquivo do nada: não há estágio 1 no índice.
+      local repo = fixture.repo()
+      repo:conflict_without_base "conflito.txt"
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+
+      assert.same({ { "atual" }, { "" }, { "entrando" } }, diff.sides())
+    end)
+
+    it("substitui o diff que estava na tela, sem deixar janela órfã", function()
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+      repo:write("a.txt", "só no disco\n")
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+      panel.focus("Untracked", "a%.txt")
+      panel.feed "<CR>"
+
+      assert.same({ { "" }, { "só no disco" } }, diff.sides())
+      assert.equals(3, window_count())
+    end)
+
+    it("não monta nada numa linha que não é conflito", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "v1\n")
+      repo:write("a.txt", "v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+
+      assert.has_no.errors(function() panel.feed "D" end)
+      assert.same({}, diff.sides())
+      assert.equals(2, window_count())
     end)
   end)
 

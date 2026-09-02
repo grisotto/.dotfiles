@@ -139,6 +139,30 @@ function M.width()
   return vim.api.nvim_win_get_width(win)
 end
 
+---Click the left button on the line the cursor is already on.
+---
+---A headless editor has no screen to point at, so the click is sent in two
+---halves: putting the cursor on the line stands for the press, which is what
+---moves it there, and the release is what the panel reacts to. A release fed
+---as a key carries no position with it, which is the release the panel reads
+---off its own cursor; where the click landed is verified by hand.
+function M.click_here() M.feed "<LeftRelease>" end
+
+---Click the entry of `section` whose line matches `pattern`.
+---@param section string e.g. "Staged"
+---@param pattern string a Lua pattern
+function M.click(section, pattern)
+  M.focus(section, pattern)
+  M.click_here()
+end
+
+---Click the header line of a section.
+---@param section string e.g. "Vistos"
+function M.click_section(section)
+  M.focus_section(section)
+  M.click_here()
+end
+
 ---Send keys to the panel as the reviewer would type them.
 ---@param keys string
 function M.feed(keys)

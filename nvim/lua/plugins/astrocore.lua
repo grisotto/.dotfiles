@@ -75,6 +75,10 @@ return {
         signcolumn = "yes", -- sets vim.opt.signcolumn to yes
         wrap = false, -- sets vim.opt.wrap
         guifont = "Fira Code:h16", -- neovide font family & size
+        -- O botão direito abre menu de contexto em todo o editor, e não só no
+        -- painel de revisão (ADR-0008). É o padrão do Neovim hoje; está escrito
+        -- aqui porque o painel depende dele para o menu dele existir.
+        mousemodel = "popup_setpos",
       },
       g = { -- vim.g.<key>
         -- configure global vim variables (vim.g)

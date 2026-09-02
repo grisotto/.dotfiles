@@ -105,18 +105,38 @@ end
 ---@return string branch
 function Repo:branch() return vim.trim(self:git { "rev-parse", "--abbrev-ref", "HEAD" }) end
 
----Leave `path` conflicted by merging a branch that changed it differently.
+---Write the two sides of a conflict on `path` — one on a branch, one on the
+---branch the repository is on — and merge them, asserting that it does
+---conflict. What is committed on each is what the index then holds in the
+---stage of that side, which is what a test comparing the versions reads.
+---@param repo FixtureRepo
 ---@param path string
-function Repo:conflict(path)
-  local ours = self:branch()
-  self:commit_file(path, "base\n", "base for " .. path)
-  self:git { "checkout", "-b", "conflicting-" .. vim.fn.fnamemodify(path, ":t:r") }
-  self:commit_file(path, "entrando\n", "their side of " .. path)
-  self:git { "checkout", ours }
-  self:commit_file(path, "atual\n", "our side of " .. path)
-  local merge = self:try_git { "merge", "--no-gpg-sign", "conflicting-" .. vim.fn.fnamemodify(path, ":t:r") }
+local function conflicting_sides(repo, path)
+  local branch = "conflicting-" .. vim.fn.fnamemodify(path, ":t:r")
+  local ours = repo:branch()
+  repo:git { "checkout", "-b", branch }
+  repo:commit_file(path, "entrando\n", "their side of " .. path)
+  repo:git { "checkout", ours }
+  repo:commit_file(path, "atual\n", "our side of " .. path)
+  local merge = repo:try_git { "merge", "--no-gpg-sign", branch }
   assert(merge.code ~= 0, "expected the merge of " .. path .. " to conflict")
 end
+
+---Leave `path` conflicted by merging a branch that changed it differently.
+---Git holds the three sides of it in the index: the base both came from, our
+---version and the one coming in.
+---@param path string
+function Repo:conflict(path)
+  -- The version both sides changed away from, which is the one git keeps in
+  -- stage 1 of the index.
+  self:commit_file(path, "base\n", "base for " .. path)
+  conflicting_sides(self, path)
+end
+
+---Leave `path` conflicted by merging a branch that added it too: a conflict the
+---two sides created from nothing, so git has no base of it to keep in stage 1.
+---@param path string
+function Repo:conflict_without_base(path) conflicting_sides(self, path) end
 
 ---A repository with one commit already in it.
 ---@param opts { commits?: boolean }|nil `commits = false` leaves it empty

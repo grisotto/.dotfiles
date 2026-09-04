@@ -12,5 +12,11 @@ require("review").setup {
   -- "section" põe os vistos numa seção recolhida no fim; "dimmed" deixa cada um
   -- esmaecido onde ele está. As duas existem para serem comparadas no uso.
   seen_display = "section",
+  -- O estado em que o painel abre: ligado, que é escolha deste revisor. O padrão
+  -- do plugin é desligado — quem desce a lista está quase sempre a caminho de um
+  -- arquivo só, e a varredura paga a leitura de todos por onde passa. Aqui a
+  -- lista abre já mostrando o diff da linha, e `p` desliga quando começa a
+  -- leitura de verdade.
+  preview = true,
   neo_tree = "close", -- fecha o neo-tree ao abrir, para não disputarem o espaço
 }

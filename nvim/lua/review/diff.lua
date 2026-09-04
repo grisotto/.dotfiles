@@ -32,11 +32,30 @@ local M = {}
 ---@field path string path relative to the repository root
 ---@field lines string[]|nil the content, when it was already read
 
----The windows this module opened in each tabpage, so opening another diff
----there can take them down. Per tabpage, like the panel: the diff of one
----tabpage is not the diff the reviewer is reading in another.
----@type table<integer, integer[]>
-local wins_by_tab = {}
+---@class ReviewDiffKey an action of the diff, written in the winbar beside what
+---it does and mapped in every one of its buffers
+---@field key string
+---@field label string what it does, in the reviewer's words, as the winbar has room for it
+---@field desc string|nil the whole of it, for the mapping; the label when absent
+---@field run fun()
+
+---@class ReviewDiffMount what one diff put on the screen, and everything that
+---has to be given back when it leaves
+---@field wins integer[] winids, left to right
+---@field bufs integer[] the buffer of each side, left to right
+---@field entry ReviewEntry|nil the line of the list this diff is of, when it is
+---one of the presentations of a line under review; nil for a consultation of a
+---rev, which is not a line of the list being shown
+---@field winbar table<integer, string> the winbar each window had before, by winid
+---@field keys ReviewDiffKey[] the keys mapped in every buffer of the diff
+---@field mappings table[] the buffer local mappings the keys of the diff wrote
+---over, as `mapset` takes them back
+
+---The diff this module mounted in each tabpage, so opening another one there
+---can take it down. Per tabpage, like the panel: the diff of one tabpage is not
+---the diff the reviewer is reading in another.
+---@type table<integer, ReviewDiffMount>
+local mounted_by_tab = {}
 
 ---What the read-only view of each tabpage gives back when it is left: the file
 ---the reviewer had beside the panel when the consultation started.
@@ -47,6 +66,23 @@ local wins_by_tab = {}
 ---anything else takes that space, which is what `M.close` is.
 ---@type table<integer, integer>
 local back_to_by_tab = {}
+
+---Which end of the file the diff of each tabpage was left standing at: 1 for
+---the last change of it, -1 for the first, and nothing at all while the
+---reviewer is somewhere in the middle.
+---
+---It is what makes leaving the file two presses instead of one. Walking the
+---changes and walking the files are two sizes of the same movement, and the
+---smaller one running into the larger without saying so would take the file
+---being read off the screen on a key that had been staying inside it. The end
+---says it is the end; the press after that goes on.
+---
+---Only a press that did not move arms it, and any press that moved takes it
+---back down, so the two presses are always in a row and at the same end. It
+---goes with the diff, like everything else here: the file that was at its last
+---change is not the one mounted in its place.
+---@type table<integer, integer>
+local at_edge_by_tab = {}
 
 ---How a rev is written on the side it is showing: short enough to leave room
 ---for the path beside it, which is the other half of the name.
@@ -116,18 +152,126 @@ local function file_buf(root, path)
   return bufnr
 end
 
----Take down the diff of this tabpage. The rev buffers go with their windows;
----the working tree side is the reviewer's own file buffer and stays, unsaved
----edits included.
-function M.close()
-  local tab = vim.api.nvim_get_current_tabpage()
-  local open = wins_by_tab[tab] or {}
-  wins_by_tab[tab] = nil
+---A label as the winbar shows it and not as it reads it: a `%` in a rev or a
+---path is the start of an item there.
+---@param text string
+---@return string
+local function literal(text) return (text:gsub("%%", "%%%%")) end
+
+---The winbar of one window of the diff: the side it is showing on the left,
+---and, on the window that carries them, the keys of the diff aligned to the
+---right. The key goes beside what it does, which is how the context menu writes
+---the same pair (ADR-0008) — the answer to "how do I close this" in the place
+---where the question is asked.
+---
+---Keys sharing a label are written together, under it: a pair that goes forward
+---and back through the same thing is one thing with two keys, and writing the
+---label twice would say there are two.
+---@param label string
+---@param keys ReviewDiffKey[]|nil
+---@return string
+local function winbar(label, keys)
+  local bar = " " .. literal(label)
+  if not keys or #keys == 0 then return bar end
+
+  local labels, keys_of = {}, {}
+  for _, key in ipairs(keys) do
+    if not keys_of[key.label] then
+      labels[#labels + 1] = key.label
+      keys_of[key.label] = {}
+    end
+    table.insert(keys_of[key.label], key.key)
+  end
+
+  local written = vim.tbl_map(
+    function(written_label) return ("%s  %s"):format(written_label, table.concat(keys_of[written_label], " ")) end,
+    labels
+  )
+  return bar .. "%=" .. literal(table.concat(written, "    ")) .. " "
+end
+
+---The diff a window is one of the sides of, whatever tabpage it was mounted in:
+---a window carried elsewhere (`<C-w>T`) is still part of the diff it came from.
+---@param win integer winid
+---@return integer|nil tab the tabpage the diff was mounted in
+---@return ReviewDiffMount|nil
+local function mount_of(win)
+  for tab, mount in pairs(mounted_by_tab) do
+    if vim.tbl_contains(mount.wins, win) then return tab, mount end
+  end
+end
+
+---The buffer local mapping of `lhs` in `bufnr`, in the form `mapset` takes it
+---back: what the reviewer already had on that key, before the diff wrote over
+---it.
+---@param bufnr integer
+---@param lhs string
+---@return table|nil
+local function mapping_of(bufnr, lhs)
+  -- Compared as the editor writes the key and not as the configuration spells
+  -- it: `<C-o>` is listed back as `<C-O>`, and held as modifier bytes that are
+  -- not what `nvim_replace_termcodes` gives for it. `keytrans` is the editor's
+  -- own answer for "what key is this", and it is the same answer for both. A
+  -- key not recognised here is a key of ours left on the reviewer's own file
+  -- for good, or one of theirs deleted as if it were ours.
+  local wanted = vim.fn.keytrans(vim.api.nvim_replace_termcodes(lhs, true, false, true))
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(bufnr, "n")) do
+    if map.lhs == lhs or vim.fn.keytrans(map.lhsraw or map.lhs) == wanted then return map end
+  end
+end
+
+---Give back everything the diff put on windows and buffers that outlive it: the
+---winbar each window had before, and the keys of the diff — including whatever
+---the reviewer's own configuration had on those keys, which the diff wrote over.
+---
+---The rev buffers are wiped with their windows and have nothing to give back,
+---but the working tree side is the reviewer's own file — it must not be left
+---carrying a key of ours once the diff is gone, nor missing one of theirs.
+---@param mount ReviewDiffMount
+local function unhook(mount)
+  for win, previous in pairs(mount.winbar) do
+    if vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_set_option_value, "winbar", previous, { scope = "local", win = win })
+    end
+  end
+  for _, bufnr in ipairs(mount.bufs) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      for _, key in ipairs(mount.keys) do
+        -- Only while the key is still ours. Something else can have taken it
+        -- back while the diff was up — the editor writes these same keys on
+        -- `FileType`, which a `:edit` of the working tree side re-fires — and
+        -- deleting that would leave the reviewer's own file without a key that
+        -- was never the diff's to take.
+        local standing = mapping_of(bufnr, key.key)
+        if standing and standing.callback == key.run then pcall(vim.keymap.del, "n", key.key, { buffer = bufnr }) end
+      end
+    end
+  end
+  for _, previous in ipairs(mount.mappings) do
+    if vim.api.nvim_buf_is_valid(previous.bufnr) then
+      pcall(vim.api.nvim_buf_call, previous.bufnr, function() vim.fn.mapset(previous.map) end)
+    end
+  end
+end
+
+---Take the diff mounted in `tab` off the screen. The rev buffers go with their
+---windows; the working tree side is the reviewer's own file buffer and stays,
+---unsaved edits included.
+---@param tab integer tabpage handle
+---@param spared integer|nil winid this is not to close: the one the editor is
+---already closing, or the one that has gone back to being the reviewer's
+local function take_down(tab, spared)
+  local mount = mounted_by_tab[tab]
+  mounted_by_tab[tab] = nil
   -- What a view of this tabpage was going to give back goes with it: whatever
   -- takes this space now is what a later consultation has to come back to.
   back_to_by_tab[tab] = nil
-  for _, win in ipairs(open) do
-    if vim.api.nvim_win_is_valid(win) then
+  at_edge_by_tab[tab] = nil
+  if not mount then return end
+
+  unhook(mount)
+  for _, win in ipairs(mount.wins) do
+    if win ~= spared and vim.api.nvim_win_is_valid(win) then
       -- Closing the last window of a tabpage closes the tabpage with it. The
       -- diff can go without taking the reviewer's tab along.
       if #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) > 1 then
@@ -139,13 +283,192 @@ function M.close()
   end
 end
 
+---Take down the diff of this tabpage.
+function M.close() take_down(vim.api.nvim_get_current_tabpage()) end
+
+---Take the diff down once the editor is done with the layout, and not in the
+---middle of it.
+---
+---A window leaving is something the editor is doing — `:q`, `:only`,
+---`:tabclose`, a buffer being closed — and closing another window from inside
+---that aborts the command that started it (`E855`), which can leave the very
+---window the reviewer asked to keep gone and one of ours in its place. By the
+---next turn of the loop the layout is the editor's own again, and what is left
+---of the diff can be taken down without arguing with it.
+---
+---Only if it is still the same diff: the reviewer can have opened another one
+---in that tabpage in between, and that one is not this one to take down.
+---@param tab integer tabpage handle
+---@param mount ReviewDiffMount the diff as it was when the window left
+---@param spared integer|nil winid that has gone back to being the reviewer's
+local function defer_take_down(tab, mount, spared)
+  vim.schedule(function()
+    if mounted_by_tab[tab] ~= mount then return end
+    take_down(tab, spared)
+    -- The window that kept the buffer keeps the layout too, and only the diff
+    -- mode over it has to go.
+    if spared and vim.api.nvim_win_is_valid(spared) then
+      vim.api.nvim_win_call(spared, function() vim.cmd "diffoff" end)
+    end
+  end)
+end
+
+local GROUP = vim.api.nvim_create_augroup("review-diff", { clear = true })
+
+---There is no half a diff on the screen. A window of it closed by hand —
+---`<Leader>x`, `:q` — takes the whole thing with it: the side left behind would
+---stay in diff mode with nothing to compare against, colouring a file that is
+---being compared with nothing, and the reviewer's own file would keep the key
+---that closes a diff that is no longer there. It is what makes closing one of
+---these windows harmless instead of forbidden.
+vim.api.nvim_create_autocmd("WinClosed", {
+  group = GROUP,
+  desc = "Derrubar o diff inteiro quando uma das janelas dele fecha",
+  callback = function(event)
+    local closing = tonumber(event.match)
+    if not closing then return end
+
+    local tab, mount = mount_of(closing)
+    if tab and mount then defer_take_down(tab, mount) end
+  end,
+})
+
+---The other way a side leaves: the window stays and shows something else. That
+---is what `<Leader>x` does to the working tree side when the reviewer has
+---another buffer for the editor to put there — the file goes, the window does
+---not. What is in that window is theirs now, so it is the one window the diff
+---does not take with it: it is left with the buffer it was given, out of diff
+---mode and without our winbar over it.
+vim.api.nvim_create_autocmd("BufWinEnter", {
+  group = GROUP,
+  desc = "Derrubar o diff quando uma das janelas dele passa a mostrar outro buffer",
+  callback = function()
+    -- Asked of the windows themselves, and not of the buffer the event carries:
+    -- a buffer can be put in a window that is not the one the editor is sitting
+    -- in. A side still showing its own buffer — a `:edit` of the file being
+    -- reviewed — is the side still being the side.
+    for tab, mount in pairs(mounted_by_tab) do
+      for _, win in ipairs(mount.wins) do
+        if vim.api.nvim_win_is_valid(win) and not vim.tbl_contains(mount.bufs, vim.api.nvim_win_get_buf(win)) then
+          defer_take_down(tab, mount, win)
+          break
+        end
+      end
+    end
+  end,
+})
+
+---How the key that brings the diff back is known to be ours when it is time to
+---give it back: it is written on the reviewer's own file, where the editor and
+---their configuration write too.
+local RETURN_DESC = "Voltar ao diff que este arquivo foi aberto de"
+
+---@class ReviewReturn the diff a file was opened from, and the way back to it
+---@field bufnr integer the file the reviewer was left in
+---@field lnum integer the line they were left on
+---@field text string what that line read, so the diff comes back to the same
+---place: the number of a line in a rev means nothing in the file, and the other
+---way round
+---@field target ReviewTarget the line of the list the diff was of
+---@field previous table|nil what that buffer had on the key, as `mapset` takes it back
+
+---What each tabpage comes back to, while a file opened from a diff has the
+---screen. One per tabpage, like the diff itself.
+---@type table<integer, ReviewReturn>
+local return_by_tab = {}
+
+---Give the buffer its key back and forget the way back.
+---
+---The mapping is on the reviewer's own file, so it comes off exactly as the
+---keys of the diff do: only while it is still ours, and putting back whatever
+---was under it.
+---@param tab integer tabpage handle
+local function forget_return(tab)
+  local pending = return_by_tab[tab]
+  return_by_tab[tab] = nil
+  if not pending or not vim.api.nvim_buf_is_valid(pending.bufnr) then return end
+
+  local key = config.options.mappings.back_to_diff
+  local standing = mapping_of(pending.bufnr, key)
+  if standing and standing.desc == RETURN_DESC then pcall(vim.keymap.del, "n", key, { buffer = pending.bufnr }) end
+  if pending.previous then
+    pcall(vim.api.nvim_buf_call, pending.bufnr, function() vim.fn.mapset(pending.previous) end)
+  end
+end
+
+---Put the diff back on the screen, at the line the reviewer left it at.
+---@param tab integer tabpage handle
+---@param pending ReviewReturn
+local function come_back(tab, pending)
+  forget_return(tab)
+
+  -- The panel is asked for now instead of remembered: it can have been closed,
+  -- or opened, while the file had the screen.
+  M.open {
+    entry = pending.target.entry,
+    root = pending.target.root,
+    mode = pending.target.mode,
+    panel = require("review.panel").win(),
+  }
+
+  local at = require("review.actions").line_that_reads_like(vim.api.nvim_get_current_buf(), pending.text, pending.lnum)
+  if not at then return end
+  vim.api.nvim_win_set_cursor(0, { at, 0 })
+  vim.cmd "normal! zz"
+end
+
+---The file opened from the diff comes back to it on the key the reviewer
+---already walks back with, with the diff one step behind the file.
+---
+---Not a key of its own, because coming back is not a new gesture: the reviewer
+---goes into the file from the line they were reading, walks from there to a
+---definition and to other files, and comes back the way they came. The jump
+---list is that way, and the diff sits just under the bottom of it.
+---
+---While the walking is inside the file the key stays the editor's, doing what
+---it always did: what the diff takes is the one jump that would leave the file,
+---which is the jump that would go past what the reviewer was reading.
+---`getjumplist` says where that jump would land without taking it.
+---@param pending ReviewReturn
+function M.returns_to(pending)
+  local tab = vim.api.nvim_get_current_tabpage()
+  forget_return(tab)
+
+  local key = config.options.mappings.back_to_diff
+  pending.previous = mapping_of(pending.bufnr, key)
+  return_by_tab[tab] = pending
+
+  vim.keymap.set("n", key, function()
+    local standing = return_by_tab[tab]
+    local list, index = unpack(vim.fn.getjumplist())
+    -- `index` is where the jump list stands, and the entry under it is where
+    -- this key would land.
+    local older = index > 0 and list[index] or nil
+    if standing and (not older or older.bufnr ~= vim.api.nvim_get_current_buf()) then
+      return come_back(tab, standing)
+    end
+    vim.cmd("normal! " .. vim.api.nvim_replace_termcodes(key, true, false, true))
+  end, { buffer = pending.bufnr, nowait = true, desc = RETURN_DESC })
+end
+
 ---Put these sides side by side beside the panel, replacing whatever diff was
 ---there.
+---
+---Each window says in its winbar which side it is showing, and the one furthest
+---to the right — where the eye ends up — also says which keys the diff answers
+---to. Those keys are mapped in every side, so they work wherever the reviewer
+---is, and they are buffer local: one of the sides can be the reviewer's own
+---file, and what is put on it there has to come off again when the diff goes.
 ---@param target ReviewTarget
 ---@param sides ReviewDiffSide[] left to right
----@param focused_side integer index into `sides` of the one the reviewer is left in
+---@param focused_side integer|nil index into `sides` of the one the reviewer is
+---left in; nil leaves the cursor where it is, which is what the preview needs
+---@param keys ReviewDiffKey[] what the diff answers to while it is on screen
+---@param entry ReviewEntry|nil the line this diff is of, for whoever asks later
+---what is beside the panel; nil for a consultation, which is not the change on
+---a line
 ---@return integer[] opened winids, left to right
-local function build(target, sides, focused_side)
+local function build(target, sides, focused_side, keys, entry)
   -- The diff that was there goes first, and only then are the new sides built:
   -- a side is told from the others by the name of its buffer, a name is unique
   -- in the editor, and the side of the previous diff still holding it would
@@ -165,11 +488,37 @@ local function build(target, sides, focused_side)
   end
 
   -- A tabpage that is gone took its diff with it; what is left here is only
-  -- the winids of tabpages still on screen.
-  for tab in pairs(wins_by_tab) do
-    if not vim.api.nvim_tabpage_is_valid(tab) then wins_by_tab[tab] = nil end
+  -- the diffs of tabpages still on screen.
+  for tab in pairs(mounted_by_tab) do
+    if not vim.api.nvim_tabpage_is_valid(tab) then mounted_by_tab[tab] = nil end
   end
-  wins_by_tab[vim.api.nvim_get_current_tabpage()] = opened
+
+  ---@type ReviewDiffMount
+  local mount = { wins = opened, bufs = bufs, winbar = {}, keys = keys, mappings = {}, entry = entry }
+  local tab = vim.api.nvim_get_current_tabpage()
+  -- A diff on the screen is the diff to come back to, so whatever way back a
+  -- file of this tabpage was holding is over — including the one this very
+  -- build is answering.
+  forget_return(tab)
+  mounted_by_tab[tab] = mount
+
+  for index, win in ipairs(opened) do
+    mount.winbar[win] = vim.api.nvim_get_option_value("winbar", { scope = "local", win = win })
+    vim.wo[win].winbar = winbar(sides[index].label, index == #opened and keys or nil)
+  end
+  for _, bufnr in ipairs(bufs) do
+    -- Everything the keys are about to write over is read before any of them is
+    -- written: two keys of the diff configured to the same lhs would otherwise
+    -- have the second one read the first one's mapping and hand a mapping of
+    -- ours back to the reviewer's file as if it were theirs.
+    for _, key in ipairs(keys) do
+      local previous = mapping_of(bufnr, key.key)
+      if previous then mount.mappings[#mount.mappings + 1] = { bufnr = bufnr, map = previous } end
+    end
+    for _, key in ipairs(keys) do
+      vim.keymap.set("n", key.key, key.run, { buffer = bufnr, nowait = true, desc = key.desc or key.label })
+    end
+  end
 
   -- One side alone is not a comparison, and putting it in diff mode would fold
   -- the whole file away: nothing differs from nothing.
@@ -178,18 +527,325 @@ local function build(target, sides, focused_side)
       vim.api.nvim_win_call(win, function() vim.cmd "diffthis" end)
     end
   end
-  vim.api.nvim_set_current_win(opened[focused_side])
+  -- Every window here was opened without entering it, so a diff that does not
+  -- take the focus is this one line left undone: the reviewer stays wherever
+  -- they were, which for the preview is the line of the list they are on.
+  if focused_side then vim.api.nvim_set_current_win(opened[focused_side]) end
 
   return opened
+end
+
+---The key that takes the diff off the screen, from any of its sides, and leaves
+---the reviewer in the panel — which is where the next file comes from. It is the
+---key that closes the panel and the graph, doing here what it does there.
+---
+---The diff is looked up by the window the key was pressed in, and not by the
+---tabpage: a side carried elsewhere (`<C-w>T`) still closes the diff it is part
+---of.
+---@param panel integer|nil winid to go back to; nil when the list is not on
+---screen, and then closing the diff is all the key does
+---@return ReviewDiffKey
+local function closing_key(panel)
+  return {
+    key = config.options.mappings.close,
+    label = "fechar",
+    desc = "Fechar o diff e voltar ao painel",
+    run = function()
+      -- The mapping is buffer local and the working tree side is the reviewer's
+      -- own file: the same key is on that buffer wherever else it is open, in
+      -- this tabpage or another. Only the window that is a side of this diff
+      -- closes it — anywhere else the key has no diff to close, and moving the
+      -- reviewer to a panel they are not looking at is worse than doing nothing.
+      local tab = mount_of(vim.api.nvim_get_current_win())
+      if not tab then return end
+
+      take_down(tab)
+      if panel and vim.api.nvim_win_is_valid(panel) then vim.api.nvim_set_current_win(panel) end
+    end,
+  }
+end
+
+---The keys that walk the list from inside the diff: the file before this one
+---and the file after it, opened without going back to the panel.
+---
+---The plain pair walks what is left to read and the shifted one walks
+---everything, which is how a file already seen is gone back to. What they move
+---is the cursor of the panel, which is the position of the review (ADR-0009):
+---the list follows the reviewer instead of being returned to.
+---
+---The panel is asked for when the key is pressed and not required up here: the
+---panel is built on top of this module, and this is the one direction in which
+---the two know about each other.
+---
+---They are guarded like the key that closes, and for the same reason: the
+---mapping is buffer local and the working tree side is the reviewer's own file,
+---so the same key is on that buffer in every other window it is open in. Only a
+---window that is a side of a mounted diff walks the review — anywhere else there
+---is no diff to walk it from, and the panel that would move is one the reviewer
+---is not reading.
+---@return ReviewDiffKey[]
+local function stepping_keys()
+  local mappings = config.options.mappings
+  ---@param direction integer
+  ---@param unseen boolean
+  ---@return fun()
+  local function step(direction, unseen)
+    return function()
+      if not mount_of(vim.api.nvim_get_current_win()) then return end
+      require("review.panel").step { direction = direction, unseen = unseen }
+    end
+  end
+
+  -- One label for each pair, which is what the winbar writes them under.
+  local left_to_read, every_file = "não vista", "todas"
+  return {
+    {
+      key = mappings.next_unseen,
+      label = left_to_read,
+      desc = "Abrir o diff da próxima não vista, sem passar pela lista",
+      run = step(1, true),
+    },
+    {
+      key = mappings.previous_unseen,
+      label = left_to_read,
+      desc = "Abrir o diff da não vista anterior, sem passar pela lista",
+      run = step(-1, true),
+    },
+    {
+      key = mappings.next_file,
+      label = every_file,
+      desc = "Abrir o diff do próximo arquivo, vistos inclusive",
+      run = step(1, false),
+    },
+    {
+      key = mappings.previous_file,
+      label = every_file,
+      desc = "Abrir o diff do arquivo anterior, vistos inclusive",
+      run = step(-1, false),
+    },
+  }
+end
+
+---Walk to the change one step away inside the side being read, and say whether
+---there was one to walk to. It is the editor's own movement, on the key it has
+---always been on: what the diff adds is only what happens when there is nothing
+---left in this direction.
+---@param direction integer 1 forward through the file, -1 back through it
+---@return boolean moved
+local function to_change(direction)
+  local before = vim.api.nvim_win_get_cursor(0)[1]
+  -- A beep and nothing else when there is no change that way, which is exactly
+  -- what is being read here. The `pcall` is for the window that is not in diff
+  -- mode — one side alone, which these keys are not given to, and a side left
+  -- by something else.
+  pcall(vim.cmd, "normal! " .. (direction == 1 and "]c" or "[c"))
+  return vim.api.nvim_win_get_cursor(0)[1] ~= before
+end
+
+---Put the cursor on the change the reviewer is coming in through: the first one
+---of the file when they are walking forward, the last one when they are walking
+---back.
+---
+---A file opens at its top, and a key that means "the next change" leaving the
+---reviewer above the first one would have to be pressed again for what it had
+---already been asked for. Crossing into a file is still the key doing what it
+---says.
+---@param direction integer
+local function to_edge_change(direction)
+  local edge = direction == 1 and 1 or vim.api.nvim_buf_line_count(0)
+  vim.api.nvim_win_set_cursor(0, { edge, 0 })
+  -- The edge line can be inside a change itself, and then it is the answer: the
+  -- movement from there would go past it, to the second change of the file.
+  if vim.fn.diff_hlID(edge, 1) == 0 then return to_change(direction) end
+  if direction == -1 then
+    -- Inside the last change, where the start of it is what the key means.
+    while edge > 1 and vim.fn.diff_hlID(edge - 1, 1) ~= 0 do
+      edge = edge - 1
+    end
+    vim.api.nvim_win_set_cursor(0, { edge, 0 })
+  end
+end
+
+---What the end of a file says: that it is the end, and what the same key does
+---from here. The key is named because it is the answer — the reviewer pressed
+---something and the screen did not move.
+---@param direction integer
+---@return string
+local function edge_message(direction)
+  local mappings = config.options.mappings
+  if direction == 1 then
+    return ("review: última mudança deste arquivo; %s de novo abre o próximo por ler."):format(mappings.next_change)
+  end
+  return ("review: primeira mudança deste arquivo; %s de novo abre o anterior por ler."):format(
+    mappings.previous_change
+  )
+end
+
+---The keys that walk the changes inside the file being read, and then go on
+---into the next file.
+---
+---They are the editor's own `]c` and `[c`, which is where the reviewer's
+---fingers already are, and they answer the same up to the end of the file. What
+---the diff adds is the end: the first press there says it is the last change,
+---and the one after it opens the next file still to read, at the first change
+---of it — the review going on at the scale above, which is `]f` (ADR-0009: the
+---cursor of the panel is the position of the review, and this moves it too).
+---
+---Guarded like the keys beside them: the mapping is buffer local and the
+---working tree side is the reviewer's own file, so the same key is on that
+---buffer in every other window it is open in. Only a window that is a side of a
+---mounted diff walks anything.
+---@return ReviewDiffKey[]
+local function changing_keys()
+  local mappings = config.options.mappings
+  ---@param direction integer
+  ---@return fun()
+  local function step(direction)
+    return function()
+      local tab = mount_of(vim.api.nvim_get_current_win())
+      if not tab then return end
+
+      if to_change(direction) then
+        at_edge_by_tab[tab] = nil
+        return
+      end
+      if at_edge_by_tab[tab] ~= direction then
+        at_edge_by_tab[tab] = direction
+        vim.notify(edge_message(direction))
+        return
+      end
+
+      at_edge_by_tab[tab] = nil
+      local moved, spoke = require("review.panel").step { direction = direction, unseen = true }
+      if not moved then
+        -- The end of the review, and it is said out loud: the reviewer was just
+        -- told this key would open the next file, and a key that answers
+        -- nothing twice reads as a key that stopped working. Unless the step
+        -- itself has already said what stopped it — two messages about one key
+        -- press, and the second one wrong.
+        if not spoke then
+          vim.notify(
+            direction == 1 and "review: não há próximo arquivo por ler."
+              or "review: não há arquivo anterior por ler."
+          )
+        end
+        return
+      end
+      -- Only into a diff of ours. The next line of the list can be a conflict,
+      -- which opens in a tabpage of the diffview (ADR-0005), and moving the
+      -- cursor inside that one is not this key's business.
+      if mount_of(vim.api.nvim_get_current_win()) then to_edge_change(direction) end
+    end
+  end
+
+  -- One label for the pair, which is what the winbar writes them under.
+  local inside_the_file = "mudança"
+  return {
+    {
+      key = mappings.next_change,
+      label = inside_the_file,
+      desc = "Ir para a próxima mudança do arquivo; na última, abrir o próximo arquivo por ler",
+      run = step(1),
+    },
+    {
+      key = mappings.previous_change,
+      label = inside_the_file,
+      desc = "Ir para a mudança anterior do arquivo; na primeira, abrir o arquivo anterior por ler",
+      run = step(-1),
+    },
+  }
+end
+
+---The key that leaves the diff for the file itself, at the point being read.
+---
+---A diff is two versions side by side and nothing else: no LSP, no going to a
+---definition, no editing in a commit. The reviewer who read down to a line and
+---wants to *do* something there is asking for the file, and asking for it here
+---— not at the top of it, which is where the key of the list opens it.
+---
+---Where "here" is comes from the text of the line and not from its number: the
+---side being read is a version of the file, and its numbering means nothing on
+---disk after anything above has changed (`open_file_at`, in the actions).
+---
+---Guarded like the keys beside it, and for the same reason: the mapping is
+---buffer local and one of the sides is the reviewer's own file.
+---@param target ReviewTarget
+---@return ReviewDiffKey
+local function opening_key(target)
+  return {
+    key = config.options.mappings.open_here,
+    label = "o arquivo",
+    desc = "Abrir o arquivo no disco no ponto que está sendo lido",
+    run = function()
+      if not mount_of(vim.api.nvim_get_current_win()) then return end
+      require("review.actions").open_file_at(target, {
+        lnum = vim.api.nvim_win_get_cursor(0)[1],
+        text = vim.api.nvim_get_current_line(),
+      })
+    end,
+  }
+end
+
+---What the diff of a file under review answers to: the way out, and the keys
+---that move the review to another file. Both of the presentations built here
+---that show the change on a line get them — a reviewer walking the list is
+---walking it whether the file is conflicted or not.
+---
+---What a rev is read or compared in does not: those are consultations of one
+---file, where the key that matters is the one that gives the window back, and a
+---key that moved the review would leave the reviewer somewhere they did not ask
+---to be with nothing to come back to.
+---@param target ReviewTarget the line the diff is being built of
+---@return ReviewDiffKey[]
+local function reviewing_keys(target)
+  return vim.list_extend(
+    vim.list_extend(vim.list_extend({ closing_key(target.panel) }, { opening_key(target) }), changing_keys()),
+    stepping_keys()
+  )
+end
+
+---Which side the reviewer is left in, and none at all when the diff is not to
+---take them anywhere: the preview draws beside a list the reviewer is still
+---walking, and a diff that took the cursor would end the sweep at its first
+---file.
+---
+---What is built is the same either way — the same sides, the same keys — so
+---that the diff the preview drew is the diff the reviewer is already reading
+---when they decide to step into it.
+---@param opts { focus: boolean|nil }|nil
+---@param side integer index of the side to leave the reviewer in
+---@return integer|nil
+local function focus_on(opts, side)
+  if opts and opts.focus == false then return nil end
+  return side
 end
 
 ---Build the diff of `target` beside its panel, replacing whatever diff was
 ---there. Focus goes to the right side: it is the one to edit in the working
 ---tree, and the version being reviewed in a commit.
 ---@param target ReviewTarget
-function M.open(target)
+---@param opts { focus: boolean|nil }|nil `focus = false` leaves the cursor
+---where it is, which is what the preview of the list needs
+function M.open(target, opts)
   local left, right = two_way_sides(target.entry)
-  build(target, { left, right }, 2)
+  build(target, { left, right }, focus_on(opts, 2), reviewing_keys(target), target.entry)
+end
+
+---The line of the list the diff of this tabpage is showing, which is how the
+---preview knows whether what is beside the list is already the file the cursor
+---is on.
+---
+---Asked of the diff that is mounted, so the answer goes away exactly when the
+---diff does: the key that closes it, a window of it closed by hand, the file
+---opened over it. Whoever remembered this for themselves would go on saying a
+---file was on the screen after it had gone.
+---
+---A consultation of a rev answers nothing: what it put there is a version the
+---reviewer went looking for, not the change on the line.
+---@return ReviewEntry|nil
+function M.showing()
+  local mount = mounted_by_tab[vim.api.nvim_get_current_tabpage()]
+  return mount and mount.entry or nil
 end
 
 ---The three versions git is holding for a conflicted path: a side each, short
@@ -215,14 +871,16 @@ local STAGES = {
 ---A stage the index does not have — a file the two sides each added has no
 ---base — comes up as an empty side, which is what it is.
 ---@param target ReviewTarget
-function M.open_conflict(target)
+---@param opts { focus: boolean|nil }|nil `focus = false` leaves the cursor
+---where it is, which is what the preview of the list needs
+function M.open_conflict(target, opts)
   local sides = {}
   for index, stage in ipairs(STAGES) do
     sides[index] = vim.tbl_extend("error", stage, { path = target.entry.path })
   end
   -- Left in our own version: it is the side the reviewer knows, and the one
   -- the incoming change is being judged against.
-  build(target, sides, 1)
+  build(target, sides, focus_on(opts, 1), reviewing_keys(target), target.entry)
 end
 
 ---The name this file goes by in `rev`, and what is under it there.
@@ -268,7 +926,7 @@ function M.open_against(target, rev)
     -- what it is: the file was not there yet, or was already gone.
     { label = short(rev), rev = rev, path = path or entry.path, lines = lines or { "" } },
     current,
-  }, 2)
+  }, 2, { closing_key(target.panel) })
 end
 
 ---Take the read-only view of a rev off the screen: the window goes back to the
@@ -286,13 +944,16 @@ local function leave(win, panel, previous)
   if vim.api.nvim_win_is_valid(win) then
     local tab = vim.api.nvim_win_get_tabpage(win)
     -- What is about to be in this window is the reviewer's, not for us to take
-    -- down later. Only when the view is all that is tracked there: a window
-    -- carried to another tabpage (`<C-w>T`) lands among that tabpage's own
-    -- windows, and forgetting those would leave them behind on the next diff.
-    local tracked = wins_by_tab[tab]
-    if tracked and #tracked == 1 and tracked[1] == win then
-      wins_by_tab[tab] = nil
+    -- down later — and it comes back without the winbar of the view over it and
+    -- without the key that leaves the view on it. Only when the view is all that
+    -- is mounted there: a window carried to another tabpage (`<C-w>T`) lands
+    -- among that tabpage's own windows, and forgetting those would leave them
+    -- behind on the next diff.
+    local mount = mounted_by_tab[tab]
+    if mount and #mount.wins == 1 and mount.wins[1] == win then
+      mounted_by_tab[tab] = nil
       back_to_by_tab[tab] = nil
+      unhook(mount)
     end
 
     if previous and vim.api.nvim_buf_is_valid(previous) then
@@ -303,7 +964,10 @@ local function leave(win, panel, previous)
       vim.api.nvim_win_call(win, function() vim.cmd "enew" end)
     end
   end
-  if vim.api.nvim_win_is_valid(panel) then vim.api.nvim_set_current_win(panel) end
+  -- The panel takes the cursor back when it is there to take it. With the list
+  -- closed the reviewer stays in the window that has just come back to them,
+  -- which is what they were looking at.
+  if panel and vim.api.nvim_win_is_valid(panel) then vim.api.nvim_set_current_win(panel) end
 end
 
 ---Show the file on the line as it is in `rev`, read only, in the window beside
@@ -328,14 +992,19 @@ function M.open_rev(target, rev)
   local tab = vim.api.nvim_get_current_tabpage()
   local previous = window.file_beside(target.panel) or back_to_by_tab[tab]
 
-  local win = build(target, { { label = short(rev), rev = rev, path = path, lines = lines } }, 1)[1]
-  back_to_by_tab[tab] = previous
-
-  vim.keymap.set("n", config.options.mappings.close, function() leave(win, target.panel, previous) end, {
-    buffer = vim.api.nvim_win_get_buf(win),
-    nowait = true,
+  -- The key is written where the view is read, like the one that closes a diff,
+  -- and it says the other thing this one does: the consultation gives the window
+  -- back to what was in it. It is mounted with the view, so it goes with the
+  -- view — the window that comes back is the reviewer's again.
+  local win
+  local back = {
+    key = config.options.mappings.close,
+    label = "voltar",
     desc = "Voltar ao que estava ao lado do painel",
-  })
+    run = function() leave(win, target.panel, previous) end,
+  }
+  win = build(target, { { label = short(rev), rev = rev, path = path, lines = lines } }, 1, { back })[1]
+  back_to_by_tab[tab] = previous
 
   return true
 end

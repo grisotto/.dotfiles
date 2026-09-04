@@ -13,11 +13,20 @@ make lint                                    # selene
 make format                                  # stylua
 ```
 
-`tests/minimal_init.lua` põe no runtimepath só este repositório, o plenary e o
-astrocore — sem AstroNvim, sem gerenciador de plugins — para que nenhum teste
-dependa da configuração real. O astrocore está lá porque o painel não detecta
-raiz de projeto nenhuma: ele pergunta ao detector do editor, que é o rooter do
-astrocore (veja o quinto item da costura).
+`tests/minimal_init.lua` põe no runtimepath só este repositório, o plenary, o
+astrocore e o mini.icons — sem AstroNvim, sem gerenciador de plugins — para que
+nenhum teste dependa da configuração real. O astrocore está lá porque o painel
+não detecta raiz de projeto nenhuma: ele pergunta ao detector do editor, que é o
+rooter do astrocore (veja o quinto item da costura).
+
+O mini.icons está lá porque toda linha do painel começa com o ícone que ele dá:
+uma suíte sem ele afirmaria sobre uma tela que o revisor nunca vê. Ele é o único
+dos três que precisa de `setup()` no `minimal_init` — é lá que o cache de onde
+os ícones saem é montado, e é lá que o `MiniIcons` global aparece, que é como o
+painel pergunta se há ícones. O ícone em si não entra nas asserções de linha: o
+helper tira a coluna dele (`panel.section`, `panel.current`, `panel.dimmed`), e
+ele tem asserção própria, contra o que o `MiniIcons.get` responde para aquele
+caminho — um glifo escrito à mão muda quando o mini.icons muda.
 
 `make test-file` roda o busted dentro do editor que o `-u` iniciou. O
 `PlenaryBustedFile` abriria outro editor, e esse outro não recebe `-u` nenhum:
@@ -31,10 +40,13 @@ repositório temporário de verdade montado pelo fixture, a API pública do plug
 acionada, e as afirmações feitas sobre cinco coisas apenas:
 
 1. as linhas renderizadas no buffer do painel, e o que ele desenha sobre elas
-   (o esmaecido de um arquivo visto, lido por `panel.dimmed`);
+   (o esmaecido de um arquivo visto, lido por `panel.dimmed`; a cor do ícone e
+   a do código de status, lidas por `panel.highlights`) e ao lado delas (o
+   `+N −M`, que é virtual text alinhado à direita, lido por `panel.numbers`);
 2. o estado real do repositório depois das ações;
 3. o que o painel põe na tela ao lado dele: as janelas em modo diff que ele
-   monta, o conteúdo de cada lado, e o arquivo que ele abre;
+   monta, o conteúdo de cada lado, a winbar de cada uma — o lado que ela mostra
+   e as teclas que o diff atende — e o arquivo que ele abre;
 4. os processos `git` que ele dispara para montar a lista, contados por um `git`
    de mentira que fica na frente do PATH (`fixture.trace_git`);
 5. o que ele põe na área de transferência, lido do provedor de clipboard do
@@ -58,7 +70,14 @@ acionada, e as afirmações feitas sobre cinco coisas apenas:
 12. o grafo de commits que ele monta ao lado do painel, lido como o painel é
     lido: as linhas renderizadas nele (`graph.lines`, `graph.line_matching`), a
     escolha de um commit (`graph.choose`) e a de um intervalo
-    (`graph.choose_range`).
+    (`graph.choose_range`);
+13. a tabela de mapeamentos do próprio editor
+    (`nvim_buf_get_keymap`): a descrição que cada tecla do painel carrega, que é
+    o que o which-key mostra, e a espera do `nowait` na tecla que também é o
+    Leader do revisor;
+14. o que ele diz em voz alta, lido da UI de notificação do editor de teste
+    (`notify.messages`, `notify.last`), que é onde a mensagem aparece para o
+    revisor.
 
 O terceiro item é a mesma regra dos outros dois — afirmar sobre o que o revisor
 vê — aplicada ao que a spec do épico já mandava cobrir: "O diff construído pelo
@@ -176,6 +195,24 @@ um buffer só, então o que se lê dele é o nome — que é o que diz de que re
 — e o que está nele, direto da janela em que ele abriu. A volta é lida do mesmo
 jeito: depois da tecla, o que a janela ao lado do painel está mostrando.
 
+j décimo quarto entrou com o par que anda pelas mudanças de dentro do arquivo
+(`]c` e `[c`): na ponta do arquivo a tecla não move nada, e a mensagem é a
+resposta inteira — sem ela o teste não distinguiria a tecla que avisou da tecla
+que não fez nada, que é justamente a diferença que o revisor sente. É a mesma
+ideia do quinto e do sexto: a tela aqui é uma UI do editor, e é dela que o teste
+lê. As outras mensagens do painel continuam sem asserção, porque nelas a
+mensagem acompanha um efeito que já é lido — o `git status` depois da recusa, a
+lista depois da volta ao working tree.
+
+A ida ao arquivo e a volta (`go` e `<C-o>`) são lidas pelo terceiro item e pelo
+primeiro: qual buffer está na janela ao lado do painel e em que linha o cursor
+parou, mais as janelas em modo diff — nenhuma, depois do `go`; as duas de volta,
+depois da volta. A jumplist não é afirmada: o que se afirma é onde o revisor
+está, que é o que ele vê. A tecla é lida da tabela de mapeamentos (décimo
+terceiro item) no teste de que ela sai do arquivo do revisor quando outro diff é
+montado — uma tecla nossa esquecida no arquivo dele é o que esse teste existe
+para impedir.
+
 O segundo grafo, o do gitgraph, fica sem teste como a delegação ao diffview e ao
 neogit ficam, e pelo mesmo motivo (ADR-0005): é uma chamada de uma linha, e
 cobri-la exigiria um backend falso. O que o hook dele faz — `review.commit` — é
@@ -210,11 +247,22 @@ afirma sobre o disco depois de uma ação: `repo:read` e `repo:exists`.
 `tests/helpers/panel.lua` lê o painel como o revisor o vê: acha a janela pelo
 filetype, devolve as linhas renderizadas (`panel.lines`), as entradas de uma
 seção (`panel.section "Staged"`), a contagem do cabeçalho de seção
-(`panel.section_count`), as entradas esmaecidas (`panel.dimmed`), põe o cursor
+(`panel.section_count`), as entradas esmaecidas (`panel.dimmed`), o que ele
+desenha por cima de uma linha (`panel.highlights`, que devolve o grupo de
+destaque de cada trecho pelo texto que ele cobre) e ao lado dela
+(`panel.numbers`, o `+N −M` que o numstat contou; nil na linha que não tem
+números), põe o cursor
 numa entrada de uma seção (`panel.focus("Staged", "a%.txt")` — a seção importa,
 porque o mesmo arquivo pode estar listado em mais de uma) ou no cabeçalho de uma
 seção (`panel.focus_section "Vistos"`, para expandir e recolher) e manda teclas
-para o painel (`panel.feed`).
+para o painel (`panel.feed`). Onde o cursor ficou depois de uma tecla é lido por
+`panel.cursor` (a linha) e `panel.current` (o que está escrito nela), que é como
+se afirma sobre a tecla que marca e desce para a próxima não vista.
+
+`panel.move` é a tecla que anda pela lista mais o `CursorMoved` que um editor
+headless não dispara, que é o gesto que o preview segue; `panel.cursor_moved`
+dispara só o evento, no buffer do painel, para o teste que precisa dele com o
+revisor em outra janela.
 
 O clique de mouse é mandado em duas metades (`panel.click`, `panel.click_section`
 e `panel.click_here`): um editor headless não tem tela para apontar, então pôr o
@@ -237,9 +285,25 @@ por branch é a tecla que abre a busca mais o que se responde nela
 
 `tests/helpers/diff.lua` lê o diff que o painel monta: as janelas em modo diff
 da aba, da esquerda para a direita (`diff.windows`), o conteúdo de cada lado
-(`diff.sides`) e o nome de cada buffer (`diff.names`). Vale para os dois lados
-de um diff e para as três versões de um conflito: o que ele lê é o que está na
-tela, quantos lados forem.
+(`diff.sides`), o nome de cada buffer (`diff.names`) e a winbar de cada janela
+(`diff.winbars`), que é onde o revisor lê qual lado está vendo e como o diff se
+fecha. Vale para os dois lados de um diff e para as três versões de um conflito:
+o que ele lê é o que está na tela, quantos lados forem.
+
+O mesmo helper manda teclas para o diff (`diff.feed`), diz qual arquivo ele está
+mostrando (`diff.reading`) e se o revisor está dentro dele (`diff.focused`), que
+é onde as teclas do laço têm que deixá-lo. Em que linha do arquivo o cursor
+parou é lido por `diff.cursor`, que é como se afirma sobre as teclas que andam
+pelas mudanças de dentro dele, e `diff.to_top` o põe no alto do arquivo, que é
+de onde o revisor começa a lê-lo.
+
+`tests/helpers/notify.lua` é a UI de notificação do editor de teste:
+`notify.messages()` devolve o que o painel disse, na ordem, e `notify.last()` a
+última coisa dita. `notify.install()` num `before_each` e `notify.restore()` num
+`after_each`, como a UI de seleção e a de entrada. Ela existe para as teclas em
+que a mensagem é a resposta inteira — a ponta do arquivo, em `]c` e `[c`, e o que
+impede a revisão de andar quando não é o fim da lista —, e não para conferir o
+texto de toda mensagem do painel.
 
 `tests/helpers/clipboard.lua` é a área de transferência do editor de teste:
 `clipboard.content()` devolve o que foi copiado e `clipboard.clear()` a esvazia.
@@ -323,6 +387,104 @@ A delegação ao diffview e ao neogit: cobri-la exigiria injetar um backend fals
 que os testes afirmam sobre ela é o contrário: que o painel *não* monta diff
 nosso nenhum quando a tecla é de uma apresentação do diffview — nem no conflito,
 nem fora dele — e que ela não estoura quando o diffview não está no runtimepath.
+
+O `WinResized` do editor, que é o que faz o painel tomar como dele a largura
+que o revisor lhe deu com ele focado. O editor só o dispara no laço principal,
+esperando uma tecla, e um editor headless nunca chega lá: nem redimensionar por
+API, nem mandar as teclas de redimensionar o produzem. O teste da largura
+adotada faz o gesto do revisor (`<C-w>15<` no painel) e dispara o evento à mão
+com `doautocmd`; o que ele afirma é a largura que fica na tela depois de um
+acidente de layout, como os outros testes de largura. O ramo que devolve a
+largura ao painel é disparado por um `WinClosed`, que é evento comum e chega
+sozinho.
+
+Pela mesma razão fica sem teste o `VimResized` que separa o terminal
+redimensionado do revisor alargando o painel: os dois eventos são do laço
+principal, e um terminal que muda de tamanho não existe num editor headless. O
+que se verifica à mão é encolher o terminal com o cursor dentro do painel e
+alargá-lo de volta: a lista tem que voltar à largura que tinha, e não ficar com
+a que coube no terminal menor.
+
+E pela mesma razão o `CursorMoved`, que é o que faz o preview seguir o cursor da
+lista: ele é do laço principal esperando uma tecla, e um editor headless nunca
+chega lá — nem a tecla que desce a lista nem `nvim_win_set_cursor` o produzem.
+O teste faz o gesto do revisor e dispara o evento à mão (`panel.move`), como o
+teste da largura adotada dispara o `WinResized`. Ele é disparado no buffer do
+painel e não na janela atual, que é o que também permite dispará-lo de fora do
+painel: é assim que a guarda de só desenhar com o painel focado é lida — de
+dentro do diff, movendo o cursor da lista como as teclas do laço o movem. O que
+se verifica à mão, num editor dentro de um terminal: com o preview ligado, parar
+numa linha desenha o diff dela, e segurar o `j` até lá embaixo desenha um só, o
+do arquivo em que o cursor parou.
+
+O décimo terceiro entrou com o `<Space>` (`nvi-01m1kh78jhtb`), e é o item que
+descreve o que a suíte já lia sem estar escrito aqui: a descrição de cada tecla
+do painel, que é o critério de descoberta pelo teclado. A tabela de mapeamentos
+é do editor, como o menu de contexto é: o que o teste lê é o que o which-key vai
+desenhar, e não uma cópia que o plugin tivesse guardado.
+
+O painel informar por modo (`nvi-01m1kh9b2nak`) não trouxe item novo: ele é lido
+pelo sétimo e pelo décimo terceiro juntos, que é o que ele é — as mesmas duas
+listas, com três entradas a menos no modo commit. Que as teclas seguem lá é lido
+da mesma tabela de mapeamentos: elas estão nela sem descrição, que é o oposto do
+que se afirma no working tree.
+
+O laço de dentro do diff (`nvi-01m1kh7rw3p7`) não trouxe item novo: ele é lido
+pelo primeiro e pelo terceiro juntos, que é o que ele é — uma tecla apertada no
+diff que move o cursor da lista e abre outro diff. O que se afirma é o que os
+dois mostram depois dela: qual arquivo está no diff (`diff.reading`, que é o
+nome do buffer do terceiro item), em que linha o cursor do painel parou
+(`panel.current`) e onde o revisor ficou (`diff.focused`) — deixar o foco no
+diff é critério de aceite, e é a única coisa aqui que não é conteúdo de tela.
+A tecla é mandada para o diff como as do painel são mandadas para ele
+(`diff.feed`), do lado que o revisor está lendo.
+
+O preview (`nvi-01m1kh83jb71`) também não trouxe item novo: ele é lido pelo
+primeiro, pelo terceiro e pelo quarto juntos — em que linha da lista o cursor
+está, o que apareceu ao lado dela, e quantos processos do git isso custou. O
+quarto é o que responde ao critério de não redesenhar: uma entrada que não mudou
+seria redesenhada idêntica, e o que separa "não redesenhou" de "redesenhou igual"
+são os `git show` que o desenho dispara. A espera do preview é tempo de verdade —
+o teste espera pelo que apareceu na tela, como o revisor espera.
+
+A espera do `<Space>`, que é o que deixa os comandos de `<Leader>` de pé dentro
+do painel de quem tem o espaço como Leader. O que o teste lê é a tabela de
+mapeamentos do próprio editor — a tecla do painel que é o Leader do revisor está
+lá sem o `nowait` que todas as outras têm —, e não a espera acontecendo: um
+editor headless não espera por tecla nenhuma, e `nvim_feedkeys` entrega a
+sequência inteira de uma vez, onde não há ambiguidade que resolver. Que a espera
+de fato acontece é verificado à mão, num editor dentro de um terminal: com o
+cursor no painel, `<Space>` sozinho marca depois do `timeoutlen`, e `<Space>` mais
+a letra de um comando de Leader roda o comando em vez de marcar. Com o which-key
+instalado — e ele está — o que se olha é o mesmo gesto com o menu dele no meio:
+`<Space>` no painel tem que marcar, e não deixar o revisor dentro do menu do
+Leader. Se deixar, quem decide é a regra de uma função só (`acts_at_once`, em
+`lua/review/panel.lua`): a tecla volta a agir na hora, e os comandos de Leader
+ficam fora do painel.
+
+As teclas do laço serem as mesmas quatro que o editor de verdade escreve no
+buffer a cada `FileType` (`]f`, `[f`, `]F`, `[F`, do treesitter do AstroNvim). A
+suíte não tem AstroNvim no runtimepath, então o que ela cobre é a regra —
+o diff só apaga da tecla o que foi ele que escreveu, e devolve o que estava lá —
+e não o encontro com quem as escreve. O que se verifica à mão, num editor com a
+configuração real: com o diff montado, `]f` anda a revisão; um `:edit` do lado do
+working tree devolve as quatro ao treesitter com o diff ainda de pé, e um `<CR>`
+na lista as traz de volta; fechando o diff, `]f` volta a ser "próxima função".
+
+`]c` e `[c` são o caso oposto e ficam sem teste pela mesma razão: elas não são
+mapeamento de ninguém — são comando do editor —, então não há o que a suíte
+possa ler antes nem depois; o que ela cobre é o que a tecla faz enquanto o diff
+está de pé. À mão, num editor com a configuração real: com o diff fechado, `]c`
+volta a ser o pulo do próprio editor entre as mudanças de um `:diffthis`, e o
+`]g` do gitsigns segue sendo o dele em qualquer arquivo.
+
+A tecla que a linha do próximo passo nomeia no working tree (`<Leader>gnc`, a
+página de commit do neogit). Ela não é nossa e não está nesta configuração: quem
+a escreve é o astrocommunity, que não está no runtimepath da suíte, então não há
+tabela de mapeamentos em que conferi-la. O que se verifica à mão, num editor com
+a configuração real: com tudo visto, a tecla que o painel escreve é a que abre o
+neogit. Se ela mudar de lado um dia, é o `NEOGIT_COMMIT` de `lua/review/panel.lua`
+que a acompanha.
 
 Onde o clique caiu, que é o que separa um clique numa linha de um clique nas
 linhas vazias abaixo da lista (`is_click_on_a_line`, em `lua/review/window.lua`,

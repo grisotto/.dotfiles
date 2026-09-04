@@ -56,6 +56,15 @@ function M.annotate(opts)
   require("review.actions").annotate_line(panel.mode(), opts, panel.refresh)
 end
 
+---Mark the file the review is on as seen and open the next one still to read.
+---
+---The loop of the list, on a key that works from inside the file being read,
+---which is where the reviewer is nearly all the time. What it marks is the
+---entry under the panel's cursor: that cursor is the position of the review
+---(ADR-0009), and the file on the screen would not answer which of the entries
+---of a file changed twice is being read.
+function M.seen_and_next() require("review.panel").seen_and_next() end
+
 ---Generate the report of the review under way: a markdown document with the
 ---annotations grouped by file, written outside the repository, and the same
 ---points in the quickfix. Of the repository the panel of this tabpage is

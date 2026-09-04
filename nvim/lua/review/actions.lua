@@ -204,6 +204,20 @@ function M.open(target)
   diff.open(target)
 end
 
+---Show what the line represents beside the panel without taking the reviewer
+---out of the list: the diff the preview draws while the cursor walks it.
+---
+---A conflict shows the three versions built beside the panel, and not the merge
+---tool the same line opens with `<CR>`: the merge tool is a tabpage of the
+---diffview's, and a preview that changed tabpage every time the sweep passed a
+---conflict would not be a sweep at all. It is the presentation a conflict has
+---for exactly this — the one that keeps the list on screen (ADR-0006).
+---@param target ReviewTarget
+function M.preview(target)
+  if target.entry.section == "conflicts" then return diff.open_conflict(target, { focus = false }) end
+  diff.open(target, { focus = false })
+end
+
 ---Open the same thing in its alternative presentation: the diffview's own tab,
 ---or, for a conflict, the layout that includes the base version.
 ---@param target ReviewTarget
@@ -421,6 +435,82 @@ function M.open_file(target)
   edit(window.content(target.panel, vim.fn.bufadd(path)), path)
 end
 
+---The line of `bufnr` that reads like `text`, looked for from `lnum` outwards:
+---the same line when the file has not moved under the reviewer, and the nearest
+---line that says the same thing when it has.
+---
+---By the text and not by the number, which is the reancoragem the annotations
+---already do (ADR-0003): the line being read comes from a version of the file —
+---the index, a commit — and the number it has there means nothing on disk once
+---anything above it has changed. Outwards from the number because a file
+---repeats lines, and of two lines that read the same the one nearer where the
+---reviewer was is the one they were reading.
+---
+---Blank lines and lines of punctuation alone anchor nothing: half a file reads
+---like `end`, and the nearest one is not the one being read. There the number
+---is all there is.
+---@param bufnr integer
+---@param text string the line as it is in the diff
+---@param lnum integer where it was in the diff
+---@return integer|nil lnum nil when the text is not in the file
+function M.line_that_reads_like(bufnr, text, lnum)
+  local wanted = vim.trim(text)
+  if wanted == "" or #wanted < 3 then return nil end
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local last = #lines
+  for distance = 0, last do
+    for _, candidate in ipairs { lnum - distance, lnum + distance } do
+      if candidate >= 1 and candidate <= last and vim.trim(lines[candidate]) == wanted then return candidate end
+    end
+  end
+end
+
+---Open the file on disk at the point being read, from inside the diff: the
+---reviewer read down to a line and wants the file itself there — to edit it, to
+---jump from it, to use everything the editor has on a real file, which two
+---read-only sides do not have.
+---
+---What is opened is always the file on disk. In the working tree one of the
+---sides already is it, and this is that side without the comparison over it; in
+---a commit neither side is — both are history — and the file is where the
+---reviewer would go to act on what they just read.
+---
+---The point comes from the text of the line, not from its number: the two only
+---agree when nothing above has changed, which is exactly what a diff says is
+---not the case. When the text is nowhere in the file — a line deleted in the
+---commit being read, a file that moved on since — the number is what is left,
+---and the key says so instead of pretending it landed.
+---@param target ReviewTarget
+---@param at { lnum: integer, text: string } where the reviewer is in the diff
+function M.open_file_at(target, at)
+  local path = absolute(target)
+  if vim.fn.filereadable(path) == 0 then
+    vim.notify(("review: %s não está no disco."):format(target.entry.path), vim.log.levels.WARN)
+    return
+  end
+
+  diff.close()
+  local bufnr = vim.fn.bufadd(path)
+  local win = window.content(target.panel, bufnr)
+  edit(win, path)
+
+  local found = M.line_that_reads_like(bufnr, at.text, at.lnum)
+  local lnum = math.min(found or at.lnum, vim.api.nvim_buf_line_count(bufnr))
+  vim.api.nvim_win_set_cursor(win, { math.max(lnum, 1), 0 })
+  -- Centred, because the reviewer arrives reading: the line they came for with
+  -- what surrounds it, and not stuck to the top or the bottom of the window.
+  vim.api.nvim_win_call(win, function() vim.cmd "normal! zz" end)
+
+  -- The diff is one step behind the file from here on, on the key the reviewer
+  -- already walks back with.
+  diff.returns_to { bufnr = bufnr, lnum = lnum, text = at.text, target = target }
+
+  if not found then
+    vim.notify(("review: esta linha não está no arquivo; %s:%d é onde ela estava."):format(target.entry.path, lnum))
+  end
+end
+
 ---Put a path where the reviewer can paste it: in the system clipboard, which
 ---is where copying points — a PR, a ticket, a message — and in the unnamed
 ---register, so it is also there for a `p` in the editor, clipboard provider or
@@ -498,9 +588,11 @@ end
 ---Show the file on the line as it is in another rev, chosen in the search:
 ---read only, named after the rev, in the window beside the panel.
 ---
----The way back is said out loud, because it is the whole point of the gesture
----— a consultation that costs the reviewer their navigation is one they stop
----making — and because the key is in a buffer with nowhere to write a hint.
+---The way back is said out loud, because it is the whole point of the gesture:
+---a consultation that costs the reviewer their navigation is one they stop
+---making. It is written in the winbar of the view as well, and stays here for
+---what does not fit there: the rev as the search offered it, with the date and
+---the subject of the commit, where the winbar has room for the short rev alone.
 ---@param target ReviewTarget
 function M.open_rev(target)
   choose_rev(target, ("Ver %s em outro rev"):format(target.entry.path), function(rev, label)

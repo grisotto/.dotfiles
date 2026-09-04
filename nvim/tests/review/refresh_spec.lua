@@ -44,8 +44,8 @@ describe("o painel se atualiza sozinho", function()
   end)
 
   it("mas não quando o arquivo salvo é de fora do repositório", function()
-    -- Ler um repositório são três processos do git, e um arquivo que não é dele
-    -- não muda uma linha da lista.
+    -- Ler um repositório são cinco processos do git, e um arquivo que não é
+    -- dele não muda uma linha da lista.
     local repo = fixture.repo()
     repo:commit_file("a.txt", "a v1\n")
     local outside = fixture.plain_dir()

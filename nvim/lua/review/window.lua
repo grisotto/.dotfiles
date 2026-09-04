@@ -10,7 +10,9 @@ local M = {}
 ---@class ReviewTarget what a line of the panel points at
 ---@field entry ReviewEntry the file on that line
 ---@field root string absolute path of the repository root
----@field panel integer winid of the panel the line was read from
+---@field panel integer|nil winid of the panel the line was read from; nil when
+---the list is not on screen, which is the reviewer reading a file with the
+---whole width of the editor
 ---@field mode ReviewMode the review the line is part of: the working tree, or a commit
 
 ---Whether the release is a click on a line of the list, which is the only
@@ -40,7 +42,8 @@ function M.is_click_on_a_line(win)
   return line <= vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
 end
 
----@param panel integer winid
+---@param panel integer|nil winid; nil is a list that is not on screen, and then
+---every ordinary window of the tabpage is beside it
 ---@return integer|nil winid the first window of the tabpage that is not the panel
 local function beside_the_panel(panel)
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -52,7 +55,11 @@ end
 
 ---The window the panel opens into, created showing `bufnr` when the panel is
 ---alone in the tabpage.
----@param panel integer winid
+---
+---With no panel on screen it is any ordinary window of the tabpage: the diff
+---the reviewer is reading takes the whole width, and what is opened next takes
+---the place of what is there.
+---@param panel integer|nil winid; nil while the list is not on screen
 ---@param bufnr integer buffer to show if the window has to be created
 ---@return integer winid
 function M.content(panel, bufnr)
@@ -62,12 +69,12 @@ function M.content(panel, bufnr)
   -- Splitting the panel halves it, so it gets its width back right after —
   -- the width it has, not the configured one, which the reviewer may have
   -- already adjusted by hand.
-  local width = vim.api.nvim_win_get_width(panel)
+  local width = panel and vim.api.nvim_win_get_width(panel)
   local opened = vim.api.nvim_open_win(bufnr, false, {
     split = config.options.position == "left" and "right" or "left",
-    win = panel,
+    win = panel or 0,
   })
-  vim.api.nvim_win_set_width(panel, width)
+  if panel and width then vim.api.nvim_win_set_width(panel, width) end
   return opened
 end
 

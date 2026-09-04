@@ -114,6 +114,188 @@ describe("visto", function()
     end)
   end)
 
+  describe("marcar e ir à próxima", function()
+    it("v marca e deixa o cursor na linha onde ele estava", function()
+      -- Desmarcar é feito olhando para o arquivo: a tecla que marca e desmarca
+      -- não sai de cima dele, ou desfazer a marca esconderia o que foi desfeito.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:commit_file("b.txt", "b v1\n")
+      repo:write("a.txt", "a v2\n")
+      repo:write("b.txt", "b v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      local line = panel.cursor()
+      panel.feed "v"
+
+      assert.equals(line, panel.cursor())
+      assert.equals(1, panel.section_count "Vistos")
+    end)
+
+    it("marca o arquivo e leva o cursor à próxima não vista", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:commit_file("b.txt", "b v1\n")
+      repo:write("a.txt", "a v2\n")
+      repo:write("b.txt", "b v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "<Space>"
+
+      assert.equals("  M  b.txt", panel.current())
+      assert.same({ "M  b.txt" }, panel.section "Unstaged")
+      assert.equals(1, panel.section_count "Vistos")
+    end)
+
+    it("desce na ordem renderizada, atravessando as seções", function()
+      -- A próxima é a próxima da lista que está na tela — Conflitos, Staged,
+      -- Unstaged, Untracked —, e não a próxima da ordem em que o git respondeu.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:commit_file("b.txt", "b v1\n")
+      repo:write("b.txt", "b v2\n")
+      repo:add "b.txt"
+      repo:write("a.txt", "a v2\n")
+      repo:write("z.txt", "z\n")
+
+      open_in(repo.root)
+      panel.focus("Staged", "b%.txt")
+      panel.feed "<Space>"
+      assert.equals("  M  a.txt", panel.current())
+
+      panel.feed "<Space>"
+      assert.equals("  ?  z.txt", panel.current())
+    end)
+
+    it("pula os outros arquivos de mesmo conteúdo, que a marca levou junto", function()
+      -- A marca é do conteúdo e não do caminho (ADR-0002): marcar um arquivo
+      -- marca todos os que têm o mesmo texto, e nenhum deles é um arquivo que
+      -- ficou por ler.
+      local repo = fixture.repo()
+      repo:write("outro.txt", "idêntico\n")
+      repo:write("um.txt", "idêntico\n")
+      repo:write("z.txt", "z\n")
+
+      open_in(repo.root)
+      panel.focus("Untracked", "outro%.txt")
+      panel.feed "<Space>"
+
+      assert.equals("  ?  z.txt", panel.current())
+      assert.equals(2, panel.section_count "Vistos")
+    end)
+
+    it("pula o mesmo conteúdo também quando os vistos ficam esmaecidos no lugar", function()
+      -- Na apresentação em que nada sai do lugar, o arquivo levado junto pela
+      -- marca continua na linha dele, esmaecido: a tecla tem que passar por ele
+      -- como passa pela seção Vistos.
+      review.setup { seen_display = "dimmed" }
+      local repo = fixture.repo()
+      repo:write("outro.txt", "idêntico\n")
+      repo:write("um.txt", "idêntico\n")
+      repo:write("z.txt", "z\n")
+
+      open_in(repo.root)
+      panel.focus("Untracked", "outro%.txt")
+      panel.feed "<Space>"
+
+      assert.equals("  ?  z.txt", panel.current())
+      assert.same({ "?  outro.txt", "?  um.txt" }, panel.dimmed())
+    end)
+
+    it("pula a seção Vistos ao procurar a próxima", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:commit_file("b.txt", "b v1\n")
+      repo:commit_file("c.txt", "c v1\n")
+      repo:write("a.txt", "a v2\n")
+      repo:write("b.txt", "b v2\n")
+      repo:write("c.txt", "c v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "c%.txt")
+      panel.feed "v"
+      panel.focus_section "Vistos"
+      panel.feed "<CR>"
+      assert.same({ "M  c.txt" }, panel.section "Vistos")
+
+      panel.focus("Unstaged", "b%.txt")
+      panel.feed "<Space>"
+
+      assert.equals("Revisão · main · 2/3 vistos", panel.current())
+    end)
+
+    it("não dá a volta: sem próxima abaixo, o cursor vai ao cabeçalho", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:commit_file("b.txt", "b v1\n")
+      repo:write("a.txt", "a v2\n")
+      repo:write("b.txt", "b v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "b%.txt")
+      panel.feed "<Space>"
+
+      -- a.txt está acima e continua por ler: a tecla não volta para ela.
+      assert.equals("Revisão · main · 1/2 vistos", panel.current())
+      assert.same({ "M  a.txt" }, panel.section "Unstaged")
+    end)
+
+    it("espera, e não engole os comandos de Leader de quem tem o espaço como Leader", function()
+      -- A tecla é local ao buffer do painel e os comandos de Leader são globais:
+      -- uma tecla que agisse na hora tiraria todos eles do revisor justamente
+      -- onde ele mais fica, que é na lista. O que se lê é a tabela de
+      -- mapeamentos do próprio editor, que é quem espera ou não espera; que a
+      -- espera de fato acontece é verificado à mão, num editor com terminal.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:write("a.txt", "a v2\n")
+
+      local leader = vim.g.mapleader
+      vim.g.mapleader = " "
+      open_in(repo.root)
+      vim.g.mapleader = leader
+
+      local waits = {}
+      local win = panel.win()
+      assert.is_not_nil(win)
+      for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(vim.api.nvim_win_get_buf(win), "n")) do
+        waits[mapping.lhs] = mapping.nowait == 0
+      end
+
+      assert.is_true(waits[" "])
+      -- E só ela: as outras teclas do painel continuam agindo na hora.
+      assert.is_false(waits["q"])
+    end)
+
+    it("em cima de um arquivo já visto, desmarca e não avança", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a v1\n")
+      repo:commit_file("b.txt", "b v1\n")
+      repo:commit_file("c.txt", "c v1\n")
+      repo:write("a.txt", "a v2\n")
+      repo:write("b.txt", "b v2\n")
+      repo:write("c.txt", "c v2\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "v"
+      panel.focus("Unstaged", "b%.txt")
+      panel.feed "v"
+      panel.focus_section "Vistos"
+      panel.feed "<CR>"
+
+      panel.focus("Vistos", "a%.txt")
+      local line = panel.cursor()
+      panel.feed "<Space>"
+
+      assert.equals(line, panel.cursor())
+      assert.equals("Revisão · main · 1/3 vistos", panel.lines()[1])
+      assert.same({ "M  a.txt", "M  c.txt" }, panel.section "Unstaged")
+    end)
+  end)
+
   describe("cabeçalho", function()
     it("mostra quantos foram vistos do total", function()
       local repo = fixture.repo()
@@ -150,6 +332,40 @@ describe("visto", function()
       assert.is_nil(panel.section_count "Staged")
       assert.same({ "M  a.txt" }, panel.section "Unstaged")
       assert.equals(1, panel.section_count "Vistos")
+    end)
+  end)
+
+  describe("a linha do próximo passo", function()
+    it("com tudo visto, diz para commitar no neogit", function()
+      -- O fim da revisão é uma linha que diz o próximo passo, e não um estado
+      -- novo: nada é iniciado, nada é finalizado (ADR-0002).
+      local repo = fixture.repo()
+      repo:write("um.txt", "um\n")
+      repo:write("dois.txt", "dois\n")
+
+      open_in(repo.root)
+      assert.is_nil(panel.line_matching "neogit")
+
+      panel.focus("Untracked", "um%.txt")
+      panel.feed "v"
+      assert.is_nil(panel.line_matching "neogit")
+
+      panel.focus("Untracked", "dois%.txt")
+      panel.feed "v"
+
+      assert.is_not_nil(panel.line_matching "neogit: <Leader>gnc")
+      assert.is_nil(panel.line_matching "Nenhuma mudança")
+    end)
+
+    it("não aparece onde não há mudança nenhuma para ver", function()
+      -- Sem nada na lista não há revisão de que falar, e a mensagem de sempre é
+      -- o que o painel tem a dizer.
+      local repo = fixture.repo()
+
+      open_in(repo.root)
+
+      assert.is_not_nil(panel.line_matching "Nenhuma mudança")
+      assert.is_nil(panel.line_matching "neogit")
     end)
   end)
 

@@ -26,3 +26,12 @@ end
 require "lazy_setup"
 require "polish"
 vim.opt.spelllang = { "pt_br", "en_us" }
+
+-- O `spellfile.vim` pergunta se quer baixar o dicionário que falta, e pergunta
+-- de dentro do buffer em que o `spell` acabou de ser ligado — que é o editor de
+-- mensagem do neogit, que abre com ele ligado. Com o noice e o snacks por cima,
+-- esse prompt não tem como ser respondido e volta a cada redesenho, bem no
+-- momento de escrever o commit. Os dicionários se instalam à mão (veja o
+-- README); o que falta fica sem correção ortográfica, que é o pior que pode
+-- acontecer aqui.
+vim.g.loaded_spellfile_plugin = 1

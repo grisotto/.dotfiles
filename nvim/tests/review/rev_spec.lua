@@ -24,16 +24,20 @@ local function resolved(path) return vim.fn.resolve(path) end
 ---@return integer how many windows the tabpage has
 local function window_count() return #vim.api.nvim_tabpage_list_wins(0) end
 
----What the window beside the panel is showing, which is where everything the
----panel opens lands.
----@return integer bufnr
-local function buf_beside_the_panel()
+---The window everything the panel opens lands in.
+---@return integer winid
+local function win_beside_the_panel()
   local win = assert(panel.win(), "o painel não está aberto")
   for _, other in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if other ~= win then return vim.api.nvim_win_get_buf(other) end
+    if other ~= win then return other end
   end
   error "não há janela ao lado do painel"
 end
+
+---What the window beside the panel is showing, which is where everything the
+---panel opens lands.
+---@return integer bufnr
+local function buf_beside_the_panel() return vim.api.nvim_win_get_buf(win_beside_the_panel()) end
 
 ---@return string the name of the buffer beside the panel
 local function name_beside_the_panel() return vim.api.nvim_buf_get_name(buf_beside_the_panel()) end
@@ -210,6 +214,22 @@ describe("o arquivo em outro rev", function()
 
       assert.same({ "a na outra" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
       assert.equals("review://outra/a.txt", vim.api.nvim_buf_get_name(0))
+    end)
+
+    it("diz na winbar de que rev é o que está na tela, e como se volta", function()
+      -- A vista é um buffer só, e um arquivo lido em outro rev é igual ao de
+      -- agora: o que diz qual dos dois está na tela é a winbar, e é onde a
+      -- tecla da volta está escrita.
+      local repo = repo_with_history()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      confirm.answer_matching "primeiro"
+      panel.feed "e"
+
+      local bar = vim.wo[win_beside_the_panel()].winbar
+      assert.matches(short(repo, "HEAD~2"), bar)
+      assert.matches("voltar%s+q", bar)
     end)
 
     it("abre ao lado do painel, na mesma aba, com a lista ainda visível", function()
@@ -408,6 +428,22 @@ describe("o arquivo em outro rev", function()
       assert.equals(resolved(repo.root .. "/a.txt"), resolved(name_beside_the_panel()))
       assert.same({}, diff.sides())
       assert.equals(2, window_count())
+    end)
+
+    it("devolve a janela sem a winbar da vista sobre o arquivo do revisor", function()
+      -- A janela volta a ser do revisor: o que a consulta escreveu nela sai
+      -- com ela, como a tecla da volta sai do buffer.
+      local repo = repo_with_history()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "o"
+      panel.focus("Unstaged", "a%.txt")
+      confirm.answer_matching "primeiro"
+      panel.feed "e"
+      feed "q"
+
+      assert.equals("", vim.wo[win_beside_the_panel()].winbar)
     end)
 
     it("devolve o mesmo arquivo depois de duas consultas seguidas", function()

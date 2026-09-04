@@ -4,6 +4,7 @@ local document = require "tests.helpers.document"
 local fixture = require "tests.helpers.fixture"
 local graph = require "tests.helpers.graph"
 local input = require "tests.helpers.input"
+local menu = require "tests.helpers.menu"
 local panel = require "tests.helpers.panel"
 local report = require "tests.helpers.report"
 local review = require "review"
@@ -295,6 +296,19 @@ describe("modo commit", function()
       assert.is_not_nil(panel.line_matching "^Revisão · main")
     end)
 
+    it("traz na segunda linha o autor, a data e os totais do commit", function()
+      -- Quem revisa o commit de outra pessoa precisa saber de quem ele é e de
+      -- quando: é isso que muda de modo para modo, e não as teclas (ADR-0001).
+      local repo = repo_with_branches()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+
+      assert.equals("Fixture · 2026-01-01 · +2 −1", panel.lines()[2])
+      assert.is_true(panel.is_dimmed "^Fixture · ")
+    end)
+
     it("abre o painel no working tree quando ele está fechado", function()
       -- A volta ao working tree com o painel fechado é o pedido pela lista:
       -- redesenhar um buffer que não está na tela não mostraria nada.
@@ -465,6 +479,97 @@ describe("modo commit", function()
     end)
   end)
 
+  describe("o que o painel oferece no modo commit", function()
+    ---As teclas do working tree que um commit não tem o que fazer com.
+    local WORKTREE_ONLY = { "s", "u", "X" }
+
+    ---A descrição que cada tecla do painel carrega, que é o que o which-key
+    ---mostra.
+    ---@return table<string, string> descrição por tecla
+    local function described()
+      local win = assert(panel.win(), "o painel não está aberto")
+      local descriptions = {}
+      for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(vim.api.nvim_win_get_buf(win), "n")) do
+        if mapping.desc and mapping.desc ~= "" then descriptions[mapping.lhs] = mapping.desc end
+      end
+      return descriptions
+    end
+
+    it("não oferece stage, unstage e descartar no menu nem no which-key", function()
+      -- Um menu que oferece o que vai ser recusado é pior do que não ter menu.
+      local repo = repo_with_branches()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+
+      local offered, keys = menu.actions(), described()
+      for _, key in ipairs(WORKTREE_ONLY) do
+        assert.is_nil(offered[key], ("o menu do modo commit ainda oferece %q"):format(key))
+        assert.is_nil(keys[key], ("a tecla %q do modo commit ainda tem descrição"):format(key))
+      end
+      -- O resto continua lá: o que sai é o que o modo não pode fazer, e não o
+      -- menu inteiro.
+      assert.equals("Abrir o diff", offered["<CR>"])
+      assert.equals("Gerar o relatório", offered["R"])
+    end)
+
+    it("segue com as três teclas mapeadas, para a recusa continuar respondendo", function()
+      -- A recusa em si é o que os testes de "as teclas do painel no modo commit"
+      -- afirmam, pelo repositório que não mudou. O que se lê aqui é que a tecla
+      -- continua no painel: só a descrição dela saiu.
+      local repo = repo_with_branches()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+
+      local win = assert(panel.win(), "o painel não está aberto")
+      local mapped = {}
+      for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(vim.api.nvim_win_get_buf(win), "n")) do
+        mapped[mapping.lhs] = true
+      end
+      for _, key in ipairs(WORKTREE_ONLY) do
+        assert.is_true(mapped[key] == true, ("a tecla %q saiu do painel em vez de só sair do menu"):format(key))
+      end
+    end)
+
+    it("volta a oferecer as três ao voltar ao working tree", function()
+      local repo = repo_with_branches()
+      repo:write("a.txt", "a v3\n")
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      panel.feed "w"
+
+      local offered, keys = menu.actions(), described()
+      for _, key in ipairs(WORKTREE_ONLY) do
+        assert.is_not_nil(offered[key], ("o menu do working tree não oferece %q"):format(key))
+        assert.is_not_nil(keys[key], ("a tecla %q do working tree ficou sem descrição"):format(key))
+      end
+    end)
+  end)
+
+  describe("a linha do próximo passo", function()
+    it("no commit, diz para gerar o relatório", function()
+      -- O fim da revisão é uma linha, e não um estado novo: nada é iniciado,
+      -- nada é finalizado (ADR-0002).
+      local repo = repo_with_branches()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      panel.focus("Mudanças", "a%.txt")
+      panel.feed "v"
+      panel.focus("Mudanças", "novo%.txt")
+      panel.feed "v"
+
+      assert.is_not_nil(panel.line_matching "Gerar o relatório: R")
+      assert.is_nil(panel.line_matching "Nenhuma mudança")
+    end)
+  end)
+
   describe("o modo intervalo", function()
     it("lista os arquivos do intervalo inteiro, e não os do último commit", function()
       local repo = repo_with_a_series()
@@ -495,6 +600,17 @@ describe("modo commit", function()
         ("o cabeçalho %q não traz o intervalo %s^..%s"):format(header, oldest, newest)
       )
       assert.is_not_nil(header:match "2 commits", header)
+    end)
+
+    it("traz na segunda linha quantos commits o intervalo tem, e os totais dele", function()
+      local repo = repo_with_a_series()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose_range("terceiro", "segundo")
+
+      assert.equals("2 commits · +2 −1", panel.lines()[2])
+      assert.is_true(panel.is_dimmed "^2 commits · ")
     end)
 
     it("recusa um intervalo entre duas branches que divergiram", function()

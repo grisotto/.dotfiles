@@ -1,3 +1,4 @@
+local editor = require "tests.helpers.editor"
 local fixture = require "tests.helpers.fixture"
 local panel = require "tests.helpers.panel"
 local review = require "review"
@@ -299,6 +300,46 @@ describe("painel de revisão", function()
       assert.equals("Revisão · main", panel.lines()[1])
     end)
 
+    it("traz na segunda linha os totais de linhas do working tree, esmaecidos", function()
+      -- Revisar o próprio working tree e revisar o commit de outra pessoa são
+      -- dois trabalhos com fins diferentes: as teclas continuam as mesmas
+      -- (ADR-0001), e o que muda é o que o painel informa.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\ndois\ntrês\n")
+      repo:write("a.txt", "um\ndois\ntrês\nquatro\n")
+      repo:write("b.txt", "novo\n")
+      repo:add "b.txt"
+
+      open_in(repo.root)
+
+      assert.equals("+2 −0", panel.lines()[2])
+      assert.is_true(panel.is_dimmed "^%+2 −0$")
+    end)
+
+    it("conta as duas mudanças do arquivo que está staged e unstaged", function()
+      -- Os totais contam mudanças, e não arquivos, como as seções e o
+      -- `N/M vistos` contam: uma mudança staged e uma unstaged no mesmo arquivo
+      -- são dois diffs para ler, e o cabeçalho diz o tamanho dos dois.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\n")
+      repo:write("a.txt", "um\ndois\n")
+      repo:add "a.txt"
+      repo:write("a.txt", "um\ndois\ntrês\n")
+
+      open_in(repo.root)
+
+      assert.equals("Revisão · main · 0/2 vistos", panel.lines()[1])
+      assert.equals("+2 −0", panel.lines()[2])
+    end)
+
+    it("traz a linha de informação mesmo sem nenhuma mudança", function()
+      local repo = fixture.repo()
+
+      open_in(repo.root)
+
+      assert.equals("+0 −0", panel.lines()[2])
+    end)
+
     it("conta os arquivos de cada seção", function()
       local repo = fixture.repo()
       repo:commit_file("a.txt", "v1\n")
@@ -380,6 +421,139 @@ describe("painel de revisão", function()
       review.setup { position = "right" }
       review.open()
       assert.is_true(vim.api.nvim_win_get_position(panel.win())[2] > 0)
+    end)
+  end)
+
+  describe("a janela do painel", function()
+    ---Abre o painel e o arquivo mudado ao lado dele: a lista de um lado, o que
+    ---o revisor está lendo do outro, que é o arranjo em que a revisão acontece.
+    ---@param repo table o repositório do fixture
+    ---@return integer winid da janela de conteúdo
+    local function open_beside_a_file(repo)
+      repo:commit_file("a.txt", "v1\n")
+      repo:write("a.txt", "v2\n")
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "o"
+      return vim.api.nvim_get_current_win()
+    end
+
+    ---Mais uma janela do lado do painel, para haver o que fechar: é o fechar
+    ---de uma janela que faz o painel conferir a largura dele.
+    ---@param win integer winid da janela a dividir
+    ---@return integer winid da janela nova
+    local function split_below(win)
+      return vim.api.nvim_open_win(vim.api.nvim_win_get_buf(win), false, { split = "below", win = win })
+    end
+
+    ---@return integer bufnr do painel aberto
+    local function panel_buf()
+      local win = assert(panel.win(), "o painel não abriu")
+      return vim.api.nvim_win_get_buf(win)
+    end
+
+    after_each(editor.reset)
+
+    it("devolve a janela de conteúdo ao arquivo quando o buffer do painel aparece nela", function()
+      -- É o que o `<C-^>`, um seletor de arquivos ou qualquer plugin que
+      -- escolha "a última janela usada" faz: põe o buffer do painel na janela
+      -- grande, e o revisor fica com a lista tomando a tela.
+      local repo = fixture.repo()
+      local content = open_beside_a_file(repo)
+      local file = vim.api.nvim_win_get_buf(content)
+      local win = assert(panel.win(), "o painel não abriu")
+
+      vim.api.nvim_win_set_buf(content, panel_buf())
+
+      assert.equals(file, vim.api.nvim_win_get_buf(content))
+      assert.equals(win, panel.win())
+    end)
+
+    it("não fecha a janela de conteúdo com a tecla que fecha o painel", function()
+      -- Com o buffer do painel na janela grande, era ela que as ações do painel
+      -- elegiam como painel — o `q` fechava a janela de trabalho do revisor.
+      local repo = fixture.repo()
+      local content = open_beside_a_file(repo)
+
+      vim.api.nvim_win_set_buf(content, panel_buf())
+      panel.feed "q"
+
+      assert.is_false(panel.is_open())
+      assert.is_true(vim.api.nvim_win_is_valid(content))
+    end)
+
+    it("não deixa uma divisão da janela do painel virar um segundo painel", function()
+      -- Dividir uma janela mostra o mesmo buffer na nova sem nunca exibi-lo, e
+      -- a lista aparecia nas duas: `win_of` só responde uma, e o `q` fechava
+      -- essa, deixando a outra na tela.
+      local repo = fixture.repo()
+      open_beside_a_file(repo)
+      local win = assert(panel.win(), "o painel não abriu")
+      local bufnr = panel_buf()
+
+      panel.feed "<C-w>s"
+
+      local showing = vim.tbl_filter(
+        function(other) return vim.api.nvim_win_get_buf(other) == bufnr end,
+        vim.api.nvim_tabpage_list_wins(0)
+      )
+      assert.same({ win }, showing)
+    end)
+
+    it("não deixa outro buffer tomar a janela do painel", function()
+      local repo = fixture.repo()
+      open_in(repo.root)
+      local win = assert(panel.win(), "o painel não abriu")
+      local bufnr = vim.api.nvim_win_get_buf(win)
+      local other = vim.api.nvim_create_buf(true, false)
+
+      local shown = pcall(vim.api.nvim_win_set_buf, win, other)
+      local emptied = pcall(vim.api.nvim_win_call, win, function() vim.cmd "enew" end)
+
+      assert.is_false(shown)
+      assert.is_false(emptied)
+
+      assert.equals(bufnr, vim.api.nvim_win_get_buf(win))
+      vim.api.nvim_buf_delete(other, { force = true })
+    end)
+
+    it("volta à largura dele quando o layout a muda sem o revisor pedir", function()
+      -- Alargar a janela ao lado espreme o painel: o `winfixwidth` segura a
+      -- largura quando uma janela abre ou fecha, e não quando outra é
+      -- redimensionada por cima dele.
+      local repo = fixture.repo()
+      local content = open_beside_a_file(repo)
+      local split = split_below(content)
+
+      vim.api.nvim_win_set_width(content, vim.o.columns - 10)
+      vim.api.nvim_win_close(split, true)
+
+      vim.wait(200, function() return panel.width() == 40 end)
+      assert.equals(40, panel.width())
+    end)
+
+    it("mantém a largura que o revisor deu ao painel", function()
+      -- Alargar o painel com ele focado é gesto do revisor: é essa largura que
+      -- volta depois de um acidente de layout, e não a configurada.
+      --
+      -- O `WinResized` é disparado à mão: o editor só o dispara no laço
+      -- principal, esperando uma tecla, e um editor headless nunca chega lá —
+      -- nem redimensionando por API, nem pelas teclas de redimensionar. O gesto
+      -- é o do revisor; o que se afirma é a largura que fica na tela depois.
+      local repo = fixture.repo()
+      local content = open_beside_a_file(repo)
+
+      panel.feed "<C-w>15<"
+      vim.cmd "doautocmd WinResized"
+      assert.equals(25, panel.width())
+
+      vim.api.nvim_set_current_win(content)
+      local split = split_below(content)
+      vim.api.nvim_win_set_width(content, vim.o.columns - 10)
+      vim.api.nvim_win_close(split, true)
+
+      vim.wait(200, function() return panel.width() == 25 end)
+      assert.equals(25, panel.width())
     end)
   end)
 

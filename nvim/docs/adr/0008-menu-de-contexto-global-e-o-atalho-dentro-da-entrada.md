@@ -32,6 +32,12 @@ teclar nada, e por isso ele e as teclas saem da mesma lista no código
 (`panel_actions`, em `lua/review/panel.lua`). Duas listas divergiriam, e uma
 entrada mostrando a tecla errada é pior do que não ter menu nenhum.
 
+O modo do painel decide quais entradas dessa lista carregam texto, e não qual
+lista é lida: no modo commit, stage, unstage e descartar ficam sem descrição, e
+por isso fora do menu e do which-key, mas seguem mapeadas — quem apertar por
+hábito recebe a recusa que aponta a tecla de volta ao working tree. Um menu que
+oferece o que vai ser recusado é pior do que não ter menu.
+
 As entradas próprias do editor — inspecionar, colar, ir para a definição — ficam
 no menu do painel, abaixo das nossas e separadas por um divisor. Elas não fazem
 sentido numa lista de arquivos, mas escondê-las significaria desmontar e remontar

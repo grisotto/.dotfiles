@@ -3,6 +3,10 @@
 local actions = require "review.actions"
 local annotation = require "review.annotation"
 local config = require "review.config"
+-- The panel is built on top of the diff (ADR-0009), which is why it can ask it
+-- what is beside the list; the diff only ever reaches back the other way from
+-- inside a key, and lazily.
+local diff = require "review.diff"
 local git = require "review.git"
 local graph = require "review.graph"
 local menu = require "review.menu"
@@ -17,6 +21,11 @@ local FILETYPE = "review"
 ---Where the dimming of a seen file is drawn, when the vistos are configured to
 ---stay in place.
 local NAMESPACE = vim.api.nvim_create_namespace(FILETYPE)
+
+---Everything the panel listens to. Up here because one of them is written on
+---the panel's own buffer as it is created, and the rest at the bottom of this
+---file, where the editor-wide ones are gathered.
+local GROUP = vim.api.nvim_create_augroup("review-panel", { clear = true })
 
 ---Sections in the order the reviewer reads them: conflicts first, because
 ---they are what has to be dealt with before anything else.
@@ -69,10 +78,18 @@ local MESSAGES = {
 ---commits: the oldest of it, with `rev` the newest
 ---@field mode ReviewMode the review the annotations and the report are of
 ---@field entry_by_line table<integer, ReviewEntry> 1-indexed, only entry lines
+---@field order ReviewEntry[] every entry listed, in the order the review goes in
 ---@field seen_collapsed boolean whether the Vistos section is showing its files
+---@field preview boolean whether the diff is following the cursor of the list
+---@field pending_preview integer|nil how many moves of the cursor have asked for
+---a preview, so that only the last of a burst draws one
 ---@field seen_header integer|nil line the Vistos header is on, when it is rendered
 ---@field mapped string[] keys currently mapped in the panel buffer
 ---@field window_options table<string, any>|nil what the panel's window looked like before it took it
+---@field winid integer|nil the window the panel is in, while it is on screen
+---@field at ReviewEntry|nil where the review went while the list was off
+---screen, for the cursor to catch up with when it comes back
+---@field width integer|nil the width the panel keeps, in columns
 
 ---The panel is single (ADR-0001), but single *per tabpage*: a reviewer keeps
 ---one repository per tabpage (`:tcd`), and a panel sharing its buffer across
@@ -80,6 +97,13 @@ local MESSAGES = {
 ---other's.
 ---@type table<integer, ReviewPanelState>
 local panels = {}
+
+---The panel buffer being put on screen by the panel itself, while that is
+---happening. The eviction at the bottom of this file has to leave alone the one
+---window that is allowed to show a panel: the window the panel is opening,
+---which has no winid to be recognised by yet.
+---@type integer|nil
+local opening = nil
 
 ---Drop the panels of tabpages that no longer exist, with their buffers: with
 ---the tabpage gone nothing can reach them again.
@@ -101,11 +125,30 @@ local function current()
 end
 
 ---The window a panel is showing in, in the tabpage it belongs to.
+---
+---The window the panel opened, first: it is the one the panel lives in, and
+---every action reads this to know where the list is. Sweeping the tabpage for
+---the panel's buffer answers *a* window showing it, which is a different
+---question — the buffer displayed in the reviewer's content window would make
+---that window the panel for every action, `close` included. The sweep is left
+---as the fallback for the winid that no longer holds, and what keeps the
+---buffer from being shown outside its window is the eviction below.
 ---@param tab integer tabpage handle
 ---@param panel ReviewPanelState
 ---@return integer|nil winid nil when that panel is closed
 local function win_of(tab, panel)
   if not vim.api.nvim_tabpage_is_valid(tab) then return nil end
+
+  local own = panel.winid
+  if
+    own
+    and vim.api.nvim_win_is_valid(own)
+    and vim.api.nvim_win_get_tabpage(own) == tab
+    and vim.api.nvim_win_get_buf(own) == panel.bufnr
+  then
+    return own
+  end
+
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
     if vim.api.nvim_win_get_buf(win) == panel.bufnr then return win end
   end
@@ -166,9 +209,23 @@ local function group(entries, sections)
   return grouped
 end
 
+---Whether an entry is one the reviewer has already read. An entry whose content
+---git could not identify never is: there is no key it could have been marked
+---under.
+---@param entry ReviewEntry
+---@param seen table<string, true> contents marked as seen
+---@return boolean
+local function is_seen(entry, seen) return entry.content ~= nil and seen[entry.content] == true end
+
+---Whether two entries are the same file under review. Section and path
+---together: the same file can be listed in two sections — changed in the index
+---and changed again on disk — and those are two changes to read, not one.
+---@param one ReviewEntry
+---@param other ReviewEntry
+---@return boolean
+local function same_entry(one, other) return one.section == other.section and one.path == other.path end
+
 ---Split the entries into the ones still to review and the ones already seen.
----An entry whose content git could not identify is never seen: there is no key
----it could have been marked under.
 ---@param entries ReviewEntry[]
 ---@param seen table<string, true> contents marked as seen
 ---@return ReviewEntry[] unseen
@@ -176,7 +233,7 @@ end
 local function split_seen(entries, seen)
   local unseen, already_seen = {}, {}
   for _, entry in ipairs(entries) do
-    table.insert(entry.content and seen[entry.content] and already_seen or unseen, entry)
+    table.insert(is_seen(entry, seen) and already_seen or unseen, entry)
   end
   return unseen, already_seen
 end
@@ -193,10 +250,104 @@ local function displayable(path) return (path:gsub("[\r\n]", { ["\n"] = "\\n", [
 ---from the list where they left remarks.
 local ANNOTATED = "✎"
 
----The line an entry is rendered on. A conflict carries a two-letter code,
----everything else one letter; padding keeps the paths in one column either way.
----The count of annotations comes after the path, where a long path pushes it
----off the panel rather than pushing the name of the file off it.
+---What each status code is drawn in: the colours the editor already has for the
+---three kinds of change, so the column is read without being learned. A
+---conflict is not one of the three — it is what has to be dealt with before the
+---review goes anywhere — and it is drawn as the error it is.
+---
+---By the first letter, which is what the panel puts on the line: the score of a
+---rename is already off it, and a conflict is answered before this is read.
+local STATUS_HIGHLIGHT = {
+  A = "Added",
+  ["?"] = "Added",
+  C = "Added",
+  M = "Changed",
+  R = "Changed",
+  T = "Changed",
+  D = "Removed",
+}
+
+---@param entry ReviewEntry
+---@return string|nil group nil for a status nothing here names
+local function status_highlight(entry)
+  if entry.section == "conflicts" then return "ErrorMsg" end
+  return STATUS_HIGHLIGHT[entry.status:sub(1, 1)]
+end
+
+---Whether the module has been asked for already. The `require` below is there
+---to make a lazily loaded mini.icons load, which happens once; without the
+---guard, a configuration without mini.icons at all would pay a search of the
+---runtimepath on every line of every draw.
+local asked_for_icons = false
+
+---What answers for icons, or nil where there are none.
+---
+---mini.icons, which is what is installed here, read from the global it
+---publishes and not from what `require` hands back: the module only answers
+---once it has been set up — the cache the icons come out of is built there —
+---so the global is what says there are icons to ask for. The `require` is still
+---made, because under a plugin manager it is what loads the plugin in the first
+---place.
+---@return table|nil
+local function icons_provider()
+  if not _G.MiniIcons and not asked_for_icons then
+    asked_for_icons = true
+    pcall(require, "mini.icons")
+  end
+  return _G.MiniIcons
+end
+
+---The icon of a file, which is what makes the panel be read by the same eyes
+---that read the file tree beside it. Absent, the line goes back to being what
+---it was: a glyph is not a dependency to take on.
+---@param path string
+---@return string|nil icon
+---@return string|nil hl the highlight the icon is drawn in
+local function icon_of(path)
+  local icons = icons_provider()
+  if not icons then return nil end
+  local ok, icon, hl = pcall(icons.get, "file", path)
+  if not ok then return nil end
+  return icon, hl
+end
+
+---@class ReviewMark what the panel draws over a stretch of one line
+---@field lnum integer 1-indexed, filled in when the line is put on the list
+---@field col integer 0-indexed byte the stretch starts at
+---@field end_col integer 0-indexed byte it ends at
+---@field group string highlight group
+
+---@class ReviewNumberMark the `+N −M` of a line, drawn beside it
+---@field lnum integer 1-indexed, filled in when the line is put on the list
+---@field chunks { [1]: string, [2]: string }[] text and highlight, as the
+---editor takes virtual text
+
+---How much a change adds and takes out, which is what decides in what order to
+---review. Drawn as virtual text against the right edge of the panel, so a long
+---path pushes the numbers off the list instead of pushing the name of the file
+---off it.
+---
+---Nothing at all where there is nothing to count: an untracked file, a
+---conflict, a binary file. Absence is honest; an invented number is not.
+---
+---A line drawn as already read keeps its numbers — how big a change is does not
+---stop being true once it has been read — but keeps them faded with the rest of
+---it: in the colours of what they add and take out they would be the one bright
+---thing on a line that is done.
+---@param entry ReviewEntry
+---@param dim boolean whether the line is drawn as already read
+---@return { [1]: string, [2]: string }[]|nil chunks
+local function number_chunks(entry, dim)
+  if not entry.added or not entry.removed then return nil end
+  local puts, takes = dim and "Comment" or "Added", dim and "Comment" or "Removed"
+  return { { ("+%d"):format(entry.added), puts }, { " " }, { ("−%d"):format(entry.removed), takes } }
+end
+
+---The line an entry is rendered on: the icon of the file, the status code, the
+---path, and the annotations. A conflict carries a two-letter code, everything
+---else one letter; padding keeps the paths in one column either way. The count
+---of annotations comes after the path, where a long path pushes it off the
+---panel rather than pushing the name of the file off it.
 ---
 ---The count is the file's, so a file listed in two sections — a staged change
 ---and an unstaged one — shows it on both lines. That is what it is: an
@@ -204,18 +355,83 @@ local ANNOTATED = "✎"
 ---reviewer happened to be reading when they wrote it.
 ---@param entry ReviewEntry
 ---@param counts table<string, integer> annotations by path
----@return string
+---@return string line
+---@return ReviewMark[] marks what is drawn over it, without their line yet
 local function entry_line(entry, counts)
-  local line = ("  %-2s %s"):format(entry.status, displayable(entry.path))
+  local marks = {}
+  local line = "  "
+
+  local icon, icon_hl = icon_of(entry.path)
+  if icon then
+    if icon_hl then marks[#marks + 1] = { col = #line, end_col = #line + #icon, group = icon_hl } end
+    line = line .. icon .. " "
+  end
+
+  local status_hl = status_highlight(entry)
+  if status_hl then marks[#marks + 1] = { col = #line, end_col = #line + #entry.status, group = status_hl } end
+  line = ("%s%-2s %s"):format(line, entry.status, displayable(entry.path))
+
   local count = counts[entry.path]
-  return count and ("%s  %s %d"):format(line, ANNOTATED, count) or line
+  if count then line = ("%s  %s %d"):format(line, ANNOTATED, count) end
+  return line, marks
 end
 
 ---@class ReviewRendered what one draw puts on screen
 ---@field lines string[]
 ---@field entry_by_line table<integer, ReviewEntry> 1-indexed, only entry lines
----@field dimmed integer[] lines drawn as already seen, where they stand
+---@field order ReviewEntry[] every entry listed, in the order the review goes in
+---@field dimmed integer[] lines drawn faded: a file already read where it
+---stands, and the line of information under the header
+---@field highlights ReviewMark[] what is drawn over the lines
+---@field numbers ReviewNumberMark[] the `+N −M` drawn beside the lines
 ---@field seen_header integer|nil line the Vistos header is on, when rendered
+
+---Where the reviewer goes after the working tree has been read through: the
+---commit page of neogit, which is what this configuration puts on that key. It
+---is not a mapping of ours and is not configurable here — it is neogit's, and
+---naming it is the whole of what the line does (ADR-0005).
+local NEOGIT_COMMIT = "<Leader>gnc"
+
+---What the panel says once there is nothing left to read.
+---
+---It is the end of the review without a state being invented for it: nothing is
+---started, nothing is finished, nothing is archived. The mark is of the content
+---and goes on crossing the modes (ADR-0002); what the end adds is a line saying
+---what to do now, which is not the same thing in every mode.
+---@param status ReviewStatus
+---@return string
+local function next_step(status)
+  if status.rev then return ("Tudo visto. Gerar o relatório: %s"):format(config.options.mappings.report) end
+  return "Tudo visto. Commitar no neogit: " .. NEOGIT_COMMIT
+end
+
+---How many commits a range holds, written the way it is read.
+---@param commits integer
+---@return string
+local function counted_commits(commits) return ("%d %s"):format(commits, commits == 1 and "commit" or "commits") end
+
+---The line of information under the header, which is where the panel says what
+---is different about the review the reviewer is in.
+---
+---Reviewing one's own working tree and reviewing somebody else's commit are two
+---jobs with different ends. The keys stay the same whichever it is (ADR-0001);
+---what changes is what the panel *informs* — and the totals are the one thing
+---every mode has, because every mode is a diff of some size.
+---@param status ReviewStatus
+---@return string
+local function information(status)
+  local parts = {}
+  if status.range and status.commits then
+    parts[#parts + 1] = counted_commits(status.commits)
+  elseif status.rev then
+    -- Whose commit it is and from when, which is what a reviewer opening
+    -- somebody else's work wants to know before reading a line of it.
+    if status.author and status.author ~= "" then parts[#parts + 1] = status.author end
+    if status.date and status.date ~= "" then parts[#parts + 1] = status.date end
+  end
+  parts[#parts + 1] = ("+%d −%d"):format(status.added, status.removed)
+  return table.concat(parts, " · ")
+end
 
 ---@class ReviewDrawing what one draw reads, the other half of `ReviewRendered`
 ---@field status ReviewStatus|nil nil when the repository could not be read
@@ -228,13 +444,39 @@ end
 ---@return ReviewRendered
 local function build_lines(drawing)
   local status, seen, counts = drawing.status, drawing.seen, drawing.counts
-  local lines, entry_by_line, dimmed, seen_header = {}, {}, {}, nil
+  local lines, entry_by_line, dimmed, highlights, numbers, seen_header = {}, {}, {}, {}, {}, nil
+
+  ---Put an entry on the next line of the list, with what the panel draws over
+  ---it and beside it. A line drawn as already read keeps its numbers and loses
+  ---its colours: the dimming is what says it is done, and a status still in the
+  ---colour of its change would leave the line read half one way and half the
+  ---other.
+  ---@param entry ReviewEntry
+  ---@param dim boolean
+  local function put(entry, dim)
+    local line, marks = entry_line(entry, counts)
+    lines[#lines + 1] = line
+    entry_by_line[#lines] = entry
+    if dim then
+      dimmed[#dimmed + 1] = #lines
+    else
+      for _, mark in ipairs(marks) do
+        mark.lnum = #lines
+        highlights[#highlights + 1] = mark
+      end
+    end
+    local chunks = number_chunks(entry, dim)
+    if chunks then numbers[#numbers + 1] = { lnum = #lines, chunks = chunks } end
+  end
 
   if not status then
     return {
       lines = { "Revisão", "", MESSAGES[drawing.failure] or MESSAGES.git_failed },
       entry_by_line = entry_by_line,
+      order = {},
       dimmed = dimmed,
+      highlights = highlights,
+      numbers = numbers,
     }
   end
 
@@ -256,22 +498,34 @@ local function build_lines(drawing)
   if #status.entries > 0 then
     lines[#lines] = ("%s · %d/%d vistos"):format(lines[#lines], #already_seen, #status.entries)
   end
+  -- Dimmed, so the header stays one line to be read and this one is there to be
+  -- glanced at.
+  lines[#lines + 1] = information(status)
+  dimmed[#dimmed + 1] = #lines
   if not status.has_commits then
     lines[#lines + 1] = ""
     lines[#lines + 1] = MESSAGES.no_commits
   end
 
   local sections = sections_of(status)
-  local grouped = group(unseen, sections)
+  -- The order the review goes in: the sections in the order the reviewer reads
+  -- them, paths ascending inside each. Every entry is in it, seen or not — the
+  -- Vistos section gathers what is done, and gathering it is a presentation of
+  -- the list, not a change to where a file stands in the review (ADR-0009).
+  local all = group(status.entries, sections)
+  local order = {}
+  for _, section in ipairs(sections) do
+    vim.list_extend(order, all[section.key])
+  end
+
+  local grouped = in_place and all or group(unseen, sections)
   for _, section in ipairs(sections) do
     local entries = grouped[section.key]
     if #entries > 0 then
       lines[#lines + 1] = ""
       lines[#lines + 1] = ("%s (%d)"):format(section.label, #entries)
       for _, entry in ipairs(entries) do
-        lines[#lines + 1] = entry_line(entry, counts)
-        entry_by_line[#lines] = entry
-        if in_place and entry.content and seen[entry.content] then dimmed[#dimmed + 1] = #lines end
+        put(entry, in_place and is_seen(entry, seen))
       end
     end
   end
@@ -287,8 +541,7 @@ local function build_lines(drawing)
     seen_header = #lines
     if not drawing.collapsed then
       for _, entry in ipairs(already_seen) do
-        lines[#lines + 1] = entry_line(entry, counts)
-        entry_by_line[#lines] = entry
+        put(entry, false)
       end
     end
   end
@@ -296,9 +549,111 @@ local function build_lines(drawing)
   if #status.entries == 0 then
     lines[#lines + 1] = ""
     lines[#lines + 1] = MESSAGES.no_changes
+  elseif #already_seen == #status.entries then
+    -- In the same place the message goes, because it is the same place: the
+    -- bottom of the list is where the panel says what there is to say when
+    -- there is nothing left on it.
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = next_step(status)
   end
 
-  return { lines = lines, entry_by_line = entry_by_line, dimmed = dimmed, seen_header = seen_header }
+  return {
+    lines = lines,
+    entry_by_line = entry_by_line,
+    order = order,
+    dimmed = dimmed,
+    highlights = highlights,
+    numbers = numbers,
+    seen_header = seen_header,
+  }
+end
+
+---How long the panel waits, in milliseconds, before the preview draws what the
+---cursor arrived on. A `j` held down a list of a hundred files goes past every
+---one of them, and each one drawn costs a `git show` per side read out of the
+---repository — two of them on a staged line and on a commit — plus a redrawn
+---screen: what the reviewer means by that gesture is the file they stop on, and
+---this is the pause that tells stopping from passing through.
+local PREVIEW_DELAY = 80
+
+---Draw beside the panel the diff of the entry the cursor is on, without taking
+---the cursor out of the list.
+---
+---On a header or a blank line nothing is drawn and what is beside the list
+---stays: passing over one on the way down the list is not asking for the diff
+---to go.
+---
+---Nor is the entry whose diff is already beside the list redrawn. It is what
+---keeps a cursor moving inside one line — and a list redrawn under a cursor
+---that did not move — from asking git for the same versions again, and the
+---screen from flickering while nothing changed.
+---
+---What is beside the list is asked of the diff, and not remembered here: the
+---`<CR>` of the list, the keys that walk the review from inside the diff and the
+---key that closes it all put something else in that space, and a memory of ours
+---would go on saying a file was on the screen after it had gone — leaving the
+---preview refusing to draw the one file the reviewer came back to.
+---@param panel ReviewPanelState
+---@param win integer winid of the panel
+local function preview_entry(panel, win)
+  if not panel.root then return end
+
+  local entry = panel.entry_by_line[vim.api.nvim_win_get_cursor(win)[1]]
+  if not entry then return end
+  local showing = diff.showing()
+  if showing and same_entry(showing, entry) then return end
+
+  actions.preview { entry = entry, root = panel.root, panel = win, mode = panel.mode }
+end
+
+---Draw the preview once the cursor has stopped moving, and only for the last
+---move of the burst: the reviewer on their way down the list passes over files
+---they are not asking to read.
+---@param panel ReviewPanelState
+local function schedule_preview(panel)
+  local pending = (panel.pending_preview or 0) + 1
+  panel.pending_preview = pending
+
+  vim.defer_fn(function()
+    if panel.pending_preview ~= pending or not panel.preview then return end
+    -- Everything is asked again now, and not when the move happened: the list
+    -- may have been redrawn in between, and what the preview is about is the
+    -- line the cursor is on when it stops.
+    --
+    -- The reviewer being in the list is asked again for a stronger reason. A key
+    -- pressed inside this pause — the `<CR>` of the list, the key that opens the
+    -- file, the one that marks and advances — takes them out of the panel and
+    -- into what it opened, and a preview built on top of that would close the
+    -- windows they are sitting in and hand them back to the list they had just
+    -- left.
+    local win = win_of(vim.api.nvim_get_current_tabpage(), panel)
+    if win and win == vim.api.nvim_get_current_win() then preview_entry(panel, win) end
+  end, PREVIEW_DELAY)
+end
+
+---While the preview is on, moving in the list is what asks for the diff: the
+---reviewer sweeps with the cursor and reads what is beside it, which is the
+---whole of the gesture (`nvi-01m1kh83jb71`).
+---
+---Only while the panel is the window the reviewer is in. Its buffer can be on
+---screen in a window that is not the panel's — that is what the eviction at the
+---bottom of this file is for — and a cursor moving there is not the review
+---moving. The cursor of the panel is also moved from outside it: the keys of
+---the diff walk the review (ADR-0009) and `<Space>` takes it to the next file,
+---and both already open what they moved to, so a preview drawn from there would
+---be a second diff built on top of the one the key just opened.
+---@param panel ReviewPanelState
+local function follow_cursor(panel)
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = GROUP,
+    buffer = panel.bufnr,
+    desc = "Desenhar o preview da entrada sob o cursor do painel de revisão",
+    callback = function()
+      if not panel.preview then return end
+      local win = win_of(vim.api.nvim_get_current_tabpage(), panel)
+      if win and win == vim.api.nvim_get_current_win() then schedule_preview(panel) end
+    end,
+  })
 end
 
 ---@return integer bufnr
@@ -319,8 +674,19 @@ local function ensure_panel()
   local panel = current()
   if panel then return panel end
 
-  panel = { bufnr = create_buf(), entry_by_line = {}, seen_collapsed = true, mapped = {}, mode = mode.WORKTREE }
+  panel = {
+    bufnr = create_buf(),
+    entry_by_line = {},
+    order = {},
+    seen_collapsed = true,
+    mapped = {},
+    mode = mode.WORKTREE,
+    -- Where the option is read: it is the state the panel opens in, and from
+    -- there the key is what says whether the diff is following the cursor.
+    preview = config.options.preview,
+  }
   panels[vim.api.nvim_get_current_tabpage()] = panel
+  follow_cursor(panel)
   return panel
 end
 
@@ -380,6 +746,281 @@ local function open_line()
   if not toggle_seen_section() then on_entry(actions.open)() end
 end
 
+---Turn the preview on, or off again: sweeping the list and reading a file are
+---two moments of the same review, and going from one to the other is a gesture
+---and not a setting to go and change (ADR-0006).
+---
+---Turning it on draws what the cursor is already on, because that is the answer
+---to the key: the reviewer asked to see what they are standing on, not to see
+---the next file they move to. Turning it off leaves the screen as it is —
+---whoever turns it off has found the file they were sweeping for, and taking
+---the diff down would take away what they just found. It is said out loud for
+---the same reason: with the diff still there, nothing else on the screen tells
+---the reviewer the key took.
+local function toggle_preview()
+  local panel, win = current(), M.win()
+  if not panel or not win then return end
+
+  panel.preview = not panel.preview
+  if panel.preview then
+    vim.notify "review: preview ligado — o diff segue o cursor da lista."
+    preview_entry(panel, win)
+  else
+    vim.notify "review: preview desligado — o diff fica onde está."
+  end
+end
+
+---Where an entry stands in the review, which is its place in the order the
+---panel lists.
+---@param panel ReviewPanelState
+---@param entry ReviewEntry
+---@return integer|nil index nil when it is no longer listed
+local function place_of(panel, entry)
+  for index, listed in ipairs(panel.order) do
+    if same_entry(listed, entry) then return index end
+  end
+end
+
+---Where the review is, read from the cursor of the panel: the place of the
+---entry it is on, or of the last one listed above it when the cursor is on a
+---line that is not a file.
+---
+---Above every entry there is no place at all, and that is not the same as being
+---before the first: the end of the review parks the cursor on the header, where
+---`N/N vistos` is written, and a walk that started counting from there would
+---answer the top of the list — which is the lap the review does not do.
+---@param panel ReviewPanelState
+---@param lnum integer the line the cursor is on
+---@return integer|nil place nil when the cursor is above the whole list
+local function place_under_cursor(panel, lnum)
+  for line = lnum, 1, -1 do
+    local entry = panel.entry_by_line[line]
+    if entry then return place_of(panel, entry) end
+  end
+end
+
+---Where the review is when there is no list on screen to read it from: the line
+---the diff beside it was built from.
+---
+---It is the one thing the reviewer can see then, and it is unambiguous — the
+---diff was built from an entry, so the file listed as two changes is not two
+---answers here. A consultation of a rev is no entry of the list and answers
+---nothing, which is the same as being nowhere in the review.
+---@param panel ReviewPanelState
+---@return integer|nil place
+local function place_of_the_diff(panel)
+  local entry = require("review.diff").showing()
+  return entry and place_of(panel, entry) or nil
+end
+
+---The entry one step away in the order the panel lists, and never wrapping
+---around: the ends of the list are the ends of the review, not a lap of it.
+---
+---The order is the list's own — the sections as the reviewer reads them, paths
+---ascending — and not the order of the lines on the screen: a file already seen
+---is gathered into the Vistos section at the end, and being done with a file
+---does not move it in the review (ADR-0009). With `seen` given it is skipped
+---altogether, which is the walk through what is left to read.
+---@param panel ReviewPanelState
+---@param from integer the place to walk away from
+---@param direction integer 1 down the list, -1 up it
+---@param seen table<string, true>|nil contents to walk past, when what is being
+---looked for is a file still to read
+---@return ReviewEntry|nil
+local function neighbour(panel, from, direction, seen)
+  for place = from + direction, direction > 0 and #panel.order or 1, direction do
+    local entry = panel.order[place]
+    if entry and not (seen and is_seen(entry, seen)) then return entry end
+  end
+end
+
+---The line an entry is drawn on now, which is where it went when the list was
+---redrawn under it.
+---@param panel ReviewPanelState
+---@param entry ReviewEntry
+---@return integer|nil lnum nil when it is not drawn: it left the list, or it is
+---inside the Vistos section while that section is collapsed
+local function line_of(panel, entry)
+  for lnum, drawn in pairs(panel.entry_by_line) do
+    if same_entry(drawn, entry) then return lnum end
+  end
+end
+
+---Where the cursor goes when there is no next file to read: the header, which is
+---where the panel writes how the review stands.
+local HEADER = 1
+
+---What the panel opens for the entry the review has moved to, in the tabpage
+---the list is in.
+---@param panel ReviewPanelState
+---@param win integer winid of the panel
+---@param entry ReviewEntry
+local function open_entry(panel, win, entry)
+  if not panel.root then return end
+  actions.open { entry = entry, root = panel.root, panel = win, mode = panel.mode }
+end
+
+---Put the cursor of the panel on an entry, which is the review moving to it.
+---
+---A file already read is inside the Vistos section, and that section opens to
+---receive the cursor when it is closed: the position of the review is a line of
+---the list (ADR-0009), so it has to have one to sit on — and a reviewer going
+---back to a file they had finished with is the one gesture that section is
+---there for.
+---With the list off screen the review moves all the same, and what it moved to
+---is written down for the cursor to catch up with when the panel comes back:
+---the position of the review is a line of the list, and it has to be that line
+---again the moment there is a list to look at.
+---@param panel ReviewPanelState
+---@param win integer|nil winid of the panel; nil while it is not on screen
+---@param entry ReviewEntry
+---@return boolean moved false when the entry is not on the list at all
+local function go_to(panel, win, entry)
+  if not win then
+    panel.at = entry
+    return true
+  end
+
+  local lnum = line_of(panel, entry)
+  if not lnum and panel.seen_collapsed then
+    panel.seen_collapsed = false
+    M.refresh()
+    lnum = line_of(panel, entry)
+  end
+  if not lnum then return false end
+
+  vim.api.nvim_win_set_cursor(win, { lnum, 0 })
+  panel.at = nil
+  return true
+end
+
+---Mark the file on the line as seen and go to the next one still to read: one
+---key for what otherwise costs three — the focus back on the list, the cursor
+---down, and the diff open again.
+---
+---Only marking advances. Unmarking is done looking at the file, and a key that
+---left it would undo the mark and take away what it undid.
+---
+---With nothing left below, the cursor goes to the header, where the panel
+---already writes how the review stands — `12/12 vistos`. That is the whole of
+---the ending: the review has no lifecycle to finish, and the end of it is a
+---line.
+---@param target ReviewTarget
+---@param opts { open: boolean } whether the next file is opened as well, which
+---is what the key means when it is pressed away from the list: there the cursor
+---moving is not something the reviewer is looking at
+local function seen_and_next(target, opts)
+  local panel, win = current(), target.panel
+  if not panel then return end
+
+  local seen = state.seen(target.root)
+  local marking = not is_seen(target.entry, seen) and target.entry.content ~= nil
+  -- The next one is read from the list before the mark, because the mark is what
+  -- moves the lines around — and read as the mark leaves it: a mark is of the
+  -- content and not of the path (ADR-0002), so it makes every entry of that
+  -- content seen at once, and none of them is a file left to read.
+  if marking then seen[target.entry.content] = true end
+  local from = place_under_cursor(panel, vim.api.nvim_win_get_cursor(win)[1])
+  local next_entry = marking and from and neighbour(panel, from, 1, seen) or nil
+
+  actions.toggle_seen(target)
+  M.refresh()
+  if not marking then return end
+
+  if next_entry and go_to(panel, win, next_entry) then
+    if opts.open then open_entry(panel, win, next_entry) end
+  else
+    vim.api.nvim_win_set_cursor(win, { HEADER, 0 })
+  end
+end
+
+---Mark what the review is on as seen and open the next file still to read: the
+---loop of the list, on a key that works from inside the file being read.
+---
+---What it marks is the entry under the panel's cursor, which is the position of
+---the review (ADR-0009). The file on the screen would not answer it: the same
+---file changed in the index and on disk is two entries of the list, two diffs
+---to read and two marks, and only the cursor says which of them is being read.
+---
+---It opens the next one, where the key of the list only points at it: the
+---reviewer pressing this is not looking at the list, and a cursor moving out of
+---sight is not an answer. With nothing left to read there is nothing to open,
+---and what says so is the list beside them — the count in the header, where the
+---cursor goes.
+function M.seen_and_next()
+  local target = target_under_cursor()
+  -- Said out loud, unlike the same key inside the list: there the reviewer is
+  -- looking at the line the key did nothing on, and here they are not looking
+  -- at the list at all.
+  if not target then
+    vim.notify(
+      "review: a revisão não está em nenhuma linha do painel; escolha uma para marcar.",
+      vim.log.levels.WARN
+    )
+    return
+  end
+  seen_and_next(target, { open = true })
+end
+
+---Move the review to the file one step away in the list and open it, without
+---going through the list: the panel's cursor is the position of the review
+---(ADR-0009), and this is the diff moving it.
+---
+---The list does not have to be on screen for it to walk: reading a file takes
+---the whole screen, and closing the list is what the reviewer does to get it —
+---the review goes on being the same review, with the same order and the same
+---place in it. What is on screen then is the diff, and the entry it was built
+---from is where the review is; the panel's cursor catches up when it comes back
+---(`go_to`).
+---
+---With the list on screen it is the cursor that answers, and nothing else
+---(ADR-0009): a reviewer who moved it to another line and pressed this key is
+---asking to walk from there, and the file on the screen would not know that.
+---
+---Nothing happens at the ends of the list, and nothing is said either: the key
+---does not wrap around, for the same reason the key of the list does not. What
+---says the review did not move is the panel — its cursorline, when it is there,
+---and the diff staying where it is when it is not.
+---
+---Everything that is not the end of the list is said out loud: a review that
+---cannot be walked at all is not a review the reviewer can see standing still,
+---and the key would look like a key that stopped working.
+---@param opts { direction: integer, unseen: boolean } `direction` is 1 down the
+---list and -1 up it; `unseen` walks past what is already marked, which is the
+---pair of keys that goes through what is left to read
+---@return boolean moved false at the ends of the list, where the review stays
+---where it is — which is what the key that walks the changes of a file reads to
+---know there was no file to go on into
+---@return boolean spoke whether it said why it did not move, so the key that
+---called it does not say something else on top
+function M.step(opts)
+  local panel = current()
+  if not panel then
+    vim.notify("review: não há revisão nesta aba; abra o painel para começar uma.", vim.log.levels.WARN)
+    return false, true
+  end
+  if not panel.root then
+    vim.notify("review: fora de um repositório git.", vim.log.levels.WARN)
+    return false, true
+  end
+
+  local win = M.win()
+  local from = win and place_under_cursor(panel, vim.api.nvim_win_get_cursor(win)[1]) or place_of_the_diff(panel)
+  if not from then
+    vim.notify(
+      "review: a revisão não está em nenhuma linha da lista; abra o painel para escolher uma.",
+      vim.log.levels.WARN
+    )
+    return false, true
+  end
+
+  local entry = neighbour(panel, from, opts.direction, opts.unseen and state.seen(panel.root) or nil)
+  if not entry or not go_to(panel, win, entry) then return false, false end
+
+  open_entry(panel, win, entry)
+  return true, false
+end
+
 ---Everything the panel does, in the order the context menu lists it: what the
 ---reviewer came to do first, the file itself next, then what changes the
 ---repository, and the panel's own keys last.
@@ -388,8 +1029,9 @@ end
 ---keys: two lists would drift, and the entry showing the wrong key is worse
 ---than no menu at all. `label` is the menu's short wording and `desc` the long
 ---one which-key shows, where there is room to say what the key does in a
----conflict too.
----@return { key: string, label: string, desc: string, run: fun() }[]
+---conflict too. `worktree_only` is what a commit has nothing to do with: those
+---entries keep their key and lose their wording (see `offered_in`).
+---@return { key: string, label: string, desc: string, worktree_only: boolean|nil, run: fun() }[]
 local function panel_actions()
   local mappings = config.options.mappings
   return {
@@ -410,6 +1052,15 @@ local function panel_actions()
       label = "Abrir as três versões do conflito",
       desc = "Abrir as três versões de um conflito ao lado do painel, sem trocar de aba",
       run = on_entry(actions.open_conflict),
+    },
+    -- Beside the keys that open a line, because what it opens is the same diff:
+    -- the difference is that this one keeps opening it, on whatever line the
+    -- cursor arrives at, without the reviewer leaving the list.
+    {
+      key = mappings.preview,
+      label = "Ligar ou desligar o preview",
+      desc = "Ligar ou desligar o preview: o diff da linha desenhado ao lado enquanto o cursor anda pela lista",
+      run = toggle_preview,
     },
     {
       key = mappings.open,
@@ -449,6 +1100,15 @@ local function panel_actions()
       end),
     },
     {
+      key = mappings.seen_and_next,
+      label = "Marcar como visto e ir à próxima",
+      desc = "Marcar o arquivo como visto e levar o cursor à próxima não vista, sem dar a volta",
+      -- From the list the cursor moving is the answer: the reviewer is looking
+      -- at it. Only pressed from away from the list does the key open what it
+      -- moved to (`M.seen_and_next`).
+      run = on_entry(function(target) seen_and_next(target, { open = false }) end),
+    },
+    {
       key = mappings.annotate,
       label = "Anotar o arquivo",
       desc = "Escrever a anotação do arquivo, sem linha; editar a que já houver",
@@ -463,10 +1123,14 @@ local function panel_actions()
       desc = "Escrever a anotação do arquivo na entrada de várias linhas",
       run = on_entry(function(target) actions.annotate_file(target, { long = true }, M.refresh) end),
     },
+    -- The three that a commit has nothing to do with: what is committed is
+    -- history, and staging it, taking it out of the index or throwing it away
+    -- are all about the working tree.
     {
       key = mappings.stage,
       label = "Mover para staged",
       desc = "Mover o arquivo para staged",
+      worktree_only = true,
       -- Same as the mark above: what tells the reviewer the file moved is the
       -- list, and only the panel knows how to redraw itself.
       run = on_entry(function(target)
@@ -478,6 +1142,7 @@ local function panel_actions()
       key = mappings.unstage,
       label = "Tirar de staged",
       desc = "Tirar o arquivo de staged",
+      worktree_only = true,
       run = on_entry(function(target)
         actions.unstage(target)
         M.refresh()
@@ -487,6 +1152,7 @@ local function panel_actions()
       key = mappings.discard,
       label = "Descartar as mudanças",
       desc = "Descartar as mudanças do arquivo, com confirmação",
+      worktree_only = true,
       -- The redraw goes along instead of following the call: the answer to the
       -- question arrives after this returns.
       run = on_entry(function(target) actions.discard(target, M.refresh) end),
@@ -550,6 +1216,22 @@ local function on_click()
   if win and window.is_click_on_a_line(win) then open_line() end
 end
 
+---Whether a key of the panel can act the moment it is typed, instead of waiting
+---to see whether a longer mapping was being typed.
+---
+---Every one of them can, except the reviewer's own leader. A key of the panel is
+---local to its buffer and the `<Leader>` commands are global, so a leader that
+---acted at once would take every one of those commands away from the reviewer
+---while the cursor is in the list — and the list is where they sit longest.
+---Waiting is the whole cost of keeping them, and it is paid by one key.
+---@param key string as it is written in the mappings
+---@return boolean
+local function acts_at_once(key)
+  local leader = vim.g.mapleader
+  if type(leader) ~= "string" then return true end
+  return vim.api.nvim_replace_termcodes(key, true, true, true) ~= leader
+end
+
 ---The panel's keys are short, local to its buffer, and their descriptions are
 ---what which-key shows. The mouse is mapped along with them, and only here: it
 ---repeats a key instead of adding an action, so it has nothing to say in a menu
@@ -567,11 +1249,36 @@ local function apply_mappings(panel, keys)
   for _, action in ipairs(mapped) do
     vim.keymap.set("n", action.key, function() action.run() end, {
       buffer = bufnr,
-      nowait = true,
+      nowait = acts_at_once(action.key),
       desc = action.desc,
     })
     panel.mapped[#panel.mapped + 1] = action.key
   end
+end
+
+---The panel's actions as the mode it is in offers them.
+---
+---A commit has nothing to do with staging, unstaging or discarding: what is
+---committed is history, and the keys already say so, with a refusal that points
+---at the key back to the working tree. What changes here is that they stop being
+---*offered* — no wording in the menu, no description for which-key — because a
+---menu offering what is going to be refused is worse than no menu at all.
+---
+---They stay mapped, so whoever presses one out of habit gets that refusal
+---instead of silence. And the filter comes off the same single list the keys and
+---the menu have always come off (ADR-0008): what the mode changes is which of
+---its entries carry wording, not which list is read.
+---@param panel ReviewPanelState
+---@return { key: string, label: string|nil, desc: string|nil, run: fun() }[] keys
+---@return ReviewMenuItem[] offered the ones the menu shows
+local function offered_in(panel)
+  local keys, offered = {}, {}
+  for _, action in ipairs(panel_actions()) do
+    local silent = action.worktree_only and panel.mode.rev ~= nil
+    keys[#keys + 1] = { key = action.key, desc = not silent and action.desc or nil, run = action.run }
+    if not silent then offered[#offered + 1] = { label = action.label, key = action.key, run = action.run } end
+  end
+  return keys, offered
 end
 
 ---Put the panel's actions where the reviewer reaches them: the keys of its
@@ -580,11 +1287,15 @@ end
 ---From one list and at one moment, because the menu is there to show the keys.
 ---Sharing the list is not enough on its own: refreshed at different times, the
 ---menu would go on showing the key of a mapping that is no longer there.
+---
+---The menu of the editor is one and global (ADR-0008), so only the panel the
+---reviewer is actually sitting in puts its entries there: a panel of another
+---tabpage being redrawn is not the menu the right button has to show.
 ---@param panel ReviewPanelState
 local function apply_actions(panel)
-  local keys = panel_actions()
+  local keys, offered = offered_in(panel)
   apply_mappings(panel, keys)
-  menu.install(keys)
+  if vim.api.nvim_get_current_buf() == panel.bufnr then menu.install(offered) end
 end
 
 ---@param panel ReviewPanelState
@@ -598,8 +1309,27 @@ local function render(panel, rendered)
   for _, lnum in ipairs(rendered.dimmed) do
     vim.api.nvim_buf_set_extmark(panel.bufnr, NAMESPACE, lnum - 1, 0, { line_hl_group = "Comment" })
   end
+  for _, mark in ipairs(rendered.highlights) do
+    vim.api.nvim_buf_set_extmark(
+      panel.bufnr,
+      NAMESPACE,
+      mark.lnum - 1,
+      mark.col,
+      { end_col = mark.end_col, hl_group = mark.group }
+    )
+  end
+  for _, mark in ipairs(rendered.numbers) do
+    vim.api.nvim_buf_set_extmark(
+      panel.bufnr,
+      NAMESPACE,
+      mark.lnum - 1,
+      0,
+      { virt_text = mark.chunks, virt_text_pos = "right_align" }
+    )
+  end
 
   panel.entry_by_line = rendered.entry_by_line
+  panel.order = rendered.order
   panel.seen_header = rendered.seen_header
 end
 
@@ -624,6 +1354,11 @@ local WINDOW_OPTIONS = {
   list = false,
   cursorline = true,
   winfixwidth = true,
+  -- The panel's window shows the panel and nothing else: a buffer opened into
+  -- it — by `<C-^>`, by a file picker, by any plugin that reuses "the last
+  -- window used" — would leave the list with no window of its own and the
+  -- reviewer reading a file in a strip forty columns wide.
+  winfixbuf = true,
 }
 
 ---@param panel ReviewPanelState
@@ -644,16 +1379,44 @@ local function open_win(panel)
     panel.window_options[name] = vim.wo[splitting][name]
   end
 
-  local win = vim.api.nvim_open_win(panel.bufnr, true, {
+  opening = panel.bufnr
+  local ok, win = pcall(vim.api.nvim_open_win, panel.bufnr, true, {
     split = options.position,
     win = -1, -- split against the whole tabpage, so the panel spans its height
     width = options.width,
   })
+  opening = nil
+  if not ok then error(win, 0) end
+
   for name, value in pairs(WINDOW_OPTIONS) do
     vim.wo[win][name] = value
   end
 
+  panel.winid = win
+  -- What it got, and not what was asked for: a screen narrower than the
+  -- configured width gives less, and that is the width to keep.
+  panel.width = vim.api.nvim_win_get_width(win)
+
   return win
+end
+
+---Leave a window showing an empty buffer, which is what a window that stops
+---showing the panel gets when there is nothing to go back to.
+---@param win integer winid
+local function empty(win)
+  vim.api.nvim_win_call(win, function() vim.cmd "enew" end)
+end
+
+---Give a window the look of an ordinary window of this tabpage: what the panel
+---read from the window it split, which is what a window that stops showing the
+---panel — the one it gives up, or one it was cloned into — has to look like
+---again.
+---@param panel ReviewPanelState
+---@param win integer winid
+local function make_ordinary(panel, win)
+  for name, value in pairs(panel.window_options or {}) do
+    vim.wo[win][name] = value
+  end
 end
 
 ---Leave the window on screen without the panel in it: an empty buffer, and the
@@ -661,10 +1424,12 @@ end
 ---@param panel ReviewPanelState
 ---@param win integer winid
 local function give_up_win(panel, win)
-  vim.api.nvim_win_call(win, function() vim.cmd "enew" end)
-  for name, value in pairs(panel.window_options or {}) do
-    vim.wo[win][name] = value
-  end
+  -- The window only takes another buffer once it stops being the panel's: the
+  -- `winfixbuf` that keeps everyone else out keeps this out too.
+  vim.wo[win].winfixbuf = false
+  empty(win)
+  make_ordinary(panel, win)
+  panel.winid = nil
 end
 
 ---Read what the panel is listing: the working tree of its directory, or the
@@ -701,6 +1466,11 @@ local function draw(panel)
       collapsed = panel.seen_collapsed,
     }
   )
+  -- What the mode offers is put back with every read, and not only when the
+  -- panel is entered: the mode is only known once git has answered, and the
+  -- key that switches to a commit reads it after the panel is already on
+  -- screen.
+  apply_actions(panel)
 end
 
 ---Put the panel of this tabpage on screen and focused, with its actions in
@@ -741,6 +1511,10 @@ function M.open()
   panel.cwd = cwd
 
   draw(panel)
+  -- The review walked while the list was off screen, and the cursor is where it
+  -- was left. It has to be where the review is, which is what the reviewer is
+  -- coming back to look at.
+  if panel.at then go_to(panel, M.win(), panel.at) end
 end
 
 ---Review a commit: the panel of this tabpage stops listing the working tree
@@ -819,6 +1593,8 @@ function M.close()
   -- reviewed — along with it, or fail outright in the last tabpage and leave
   -- the panel on screen with `toggle` stuck on closing it. It gives up the
   -- window instead.
+  -- The winid the panel keeps is dropped by the `WinClosed` this fires, which
+  -- is the one place a closed window is forgotten, whoever closed it.
   if #vim.api.nvim_tabpage_list_wins(0) > 1 and pcall(vim.api.nvim_win_close, win, false) then return end
   give_up_win(panel, win)
 end
@@ -865,11 +1641,9 @@ local function is_inside(root, path)
   return real_root ~= nil and real_path ~= nil and vim.startswith(real_path, real_root .. "/")
 end
 
-local GROUP = vim.api.nvim_create_augroup("review-panel", { clear = true })
-
 ---The panel follows the repository without being asked: what the editor itself
 ---changed on disk is listed without the reviewer having to ask for it. Only the
----panels listing the file that was saved — reading a repository is three git
+---panels listing the file that was saved — reading a repository is five git
 ---processes, and every other panel's list is exactly as it was.
 vim.api.nvim_create_autocmd("BufWritePost", {
   group = GROUP,
@@ -914,6 +1688,151 @@ vim.api.nvim_create_autocmd("FocusGained", {
   group = GROUP,
   desc = "Atualizar o painel de revisão",
   callback = function() M.refresh() end,
+})
+
+---The panel a buffer belongs to, of whatever tabpage: a panel buffer shown in
+---another tabpage's window is as much out of place as one shown beside its own
+---list.
+---@param bufnr integer
+---@return ReviewPanelState|nil
+local function panel_of_buf(bufnr)
+  for _, panel in pairs(panels) do
+    if panel.bufnr == bufnr then return panel end
+  end
+end
+
+---Put a window that ended up showing the panel back to what it was showing:
+---the buffer it had before, or an empty one when there is none to come back to.
+---@param panel ReviewPanelState
+---@param win integer winid
+local function evict(panel, win)
+  local previous = vim.api.nvim_win_call(win, function() return vim.fn.bufnr "#" end)
+  if previous > 0 and previous ~= panel.bufnr and vim.api.nvim_buf_is_valid(previous) then
+    pcall(vim.api.nvim_win_set_buf, win, previous)
+  end
+  if vim.api.nvim_win_get_buf(win) == panel.bufnr then pcall(empty, win) end
+
+  -- A window split off the panel's came with the panel's look: no line numbers,
+  -- a fixed width. What is in it now is the reviewer's, and has to look like it.
+  make_ordinary(panel, win)
+end
+
+---The list stays in the window it opened in. `winfixbuf` keeps other buffers out
+---of the panel's window; this is the other direction — the panel's buffer shown
+---in a window that is not its own, which is what `<C-^>`, a file picker or any
+---plugin reusing "the last window used" does, and what leaves the reviewer with
+---the list across the whole screen.
+---
+---`WinNew` as well as `BufWinEnter`: splitting a window shows the same buffer in
+---the new one without ever displaying it — no `BufWinEnter` — and a split of the
+---panel is two panels on screen, of which `win_of` can only answer one.
+vim.api.nvim_create_autocmd({ "BufWinEnter", "WinNew" }, {
+  group = GROUP,
+  desc = "Tirar o buffer do painel de revisão de qualquer janela que não seja a dele",
+  callback = function(event)
+    if event.buf == opening then return end
+    local panel = panel_of_buf(event.buf)
+    if not panel then return end
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if win ~= panel.winid and vim.api.nvim_win_get_buf(win) == panel.bufnr then evict(panel, win) end
+    end
+  end,
+})
+
+---The panel window of a tabpage, when the width it has is its own to keep:
+---alone in the tabpage it has the width of the screen, which is neither a
+---choice to remember nor a width to restore. Floating windows do not count —
+---one of them on top of the layout leaves the panel just as alone in it.
+---@param panel ReviewPanelState
+---@param tab integer tabpage handle
+---@return integer|nil winid
+local function win_with_its_own_width(panel, tab)
+  local win = win_of(tab, panel)
+  if not win or not panel.width then return nil end
+
+  local sharing = vim.tbl_filter(
+    function(other) return other ~= win and vim.api.nvim_win_get_config(other).relative == "" end,
+    vim.api.nvim_tabpage_list_wins(tab)
+  )
+  if #sharing == 0 then return nil end
+  return win
+end
+
+---Run `act` on every panel that is on screen with a width of its own.
+---@param act fun(panel: ReviewPanelState, win: integer)
+local function for_each_panel_window(act)
+  for tab, panel in pairs(panels) do
+    if vim.api.nvim_tabpage_is_valid(tab) then
+      local win = win_with_its_own_width(panel, tab)
+      if win then act(panel, win) end
+    end
+  end
+end
+
+---Give the panel back the width it keeps. `winfixwidth` holds that width while
+---windows open and close, and lets go when a neighbour is resized over it: the
+---columns come out of the panel, and the list stays narrow from there on.
+---@param panel ReviewPanelState
+---@param win integer winid
+local function restore_width(panel, win)
+  if vim.api.nvim_win_get_width(win) ~= panel.width then pcall(vim.api.nvim_win_set_width, win, panel.width) end
+end
+
+---Take the width the panel has now as the width it keeps.
+---@param panel ReviewPanelState
+---@param win integer winid
+local function adopt_width(panel, win) panel.width = vim.api.nvim_win_get_width(win) end
+
+---Whether the width every window has just been given came from the editor
+---itself being resized. The terminal getting narrower takes columns from the
+---panel like any other accident of layout, and it does it while the reviewer
+---may well be sitting in the panel — which is otherwise how the panel tells the
+---reviewer's own resizing apart. Read and cleared by the `WinResized` the
+---resize goes on to fire.
+local editor_resized = false
+
+vim.api.nvim_create_autocmd("VimResized", {
+  group = GROUP,
+  desc = "Marcar que quem mudou as larguras foi o editor, e não o revisor",
+  callback = function() editor_resized = true end,
+})
+
+vim.api.nvim_create_autocmd("WinResized", {
+  group = GROUP,
+  desc = "Devolver ao painel de revisão a largura dele, ou tomar como dele a que o revisor lhe deu",
+  callback = function()
+    local by_the_editor = editor_resized
+    editor_resized = false
+
+    for_each_panel_window(function(panel, win)
+      -- Resizing the panel with it focused is the reviewer asking for a wider
+      -- list, and that width becomes the panel's. A neighbour resized over it
+      -- is an accident of layout, and the panel takes its width back.
+      if not by_the_editor and win == vim.api.nvim_get_current_win() then
+        adopt_width(panel, win)
+      else
+        restore_width(panel, win)
+      end
+    end)
+  end,
+})
+
+---A window is still on screen while `WinClosed` runs, and the columns it frees
+---are handed out after it: the width is put back once that is done. Never taken
+---as the panel's own — a window closing is nobody asking for a wider list.
+vim.api.nvim_create_autocmd("WinClosed", {
+  group = GROUP,
+  desc = "Devolver ao painel de revisão a largura dele depois de uma janela fechar",
+  callback = function(event)
+    -- The window the panel was in is gone with it, however it was closed: the
+    -- winid is dropped here so nothing has to tell a stale one from a live one.
+    local closed = tonumber(event.match)
+    for _, panel in pairs(panels) do
+      if panel.winid == closed then panel.winid = nil end
+    end
+
+    vim.schedule(function() for_each_panel_window(restore_width) end)
+  end,
 })
 
 return M

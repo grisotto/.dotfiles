@@ -21,6 +21,9 @@ local M = {}
 ---@field content string|nil key of the content this entry puts under review
 ---@field rev string|nil rev the change is read from; absent in the working tree
 ---@field base string|nil rev it is read against; absent in the working tree
+---@field added integer|nil lines the change puts in; absent where there are
+---none to count — an untracked file, a conflict, a binary file
+---@field removed integer|nil lines the change takes out
 
 ---@class ReviewStatus
 ---@field root string absolute path of the repository root
@@ -32,6 +35,12 @@ local M = {}
 ---being listed, when what is listed is one
 ---@field has_commits boolean false in a repository where nothing was committed
 ---@field entries ReviewEntry[]
+---@field added integer lines put in by everything on the list
+---@field removed integer lines taken out by everything on the list
+---@field author string|nil who wrote the commit being listed; absent in the
+---working tree and in a range, which has as many authors as it has commits
+---@field date string|nil the day that commit was written, as `YYYY-MM-DD`
+---@field commits integer|nil how many commits a range holds; absent otherwise
 
 ---@alias ReviewGitFailure "not_a_repo"|"git_failed"|"no_such_rev"
 
@@ -139,6 +148,88 @@ local function parse(output)
   return { branch = branch, has_commits = has_commits, entries = entries }
 end
 
+---@class ReviewNumbers how many lines a change puts in and takes out
+---@field added integer
+---@field removed integer
+
+---Read one `--numstat -z` record, which is `add`, `del` and the path, tabs
+---between them.
+---
+---A rename writes no path in the record itself: the old one and the new one
+---come in the two fields after it, and have to be consumed as part of it — read
+---as records of their own, they corrupt everything that follows. It is the same
+---shape the rename record of `porcelain=v2` has, and for the same reason.
+---
+---A binary file has no lines to count, and git writes `-` in both columns: it
+---goes without numbers, which is what it has.
+---@param numbers table<string, ReviewNumbers> the record is written into it,
+---which is what makes this the same call wherever numstat records show up
+---@param fields string[] the NUL-separated output, split
+---@param index integer where the record starts
+---@return integer next where the record after this one starts
+local function read_numstat(numbers, fields, index)
+  local added, removed, path = fields[index]:match "^([%d-]+)\t([%d-]+)\t(.*)$"
+  index = index + 1
+  if not added then return index end
+  if path == "" then
+    path = fields[index + 1]
+    index = index + 2
+  end
+  if not path or path == "" or added == "-" then return index end
+  numbers[path] = { added = tonumber(added) or 0, removed = tonumber(removed) or 0 }
+  return index
+end
+
+---Read `git diff --numstat -z` into the numbers of each path it names.
+---@param output string
+---@return table<string, ReviewNumbers>
+local function parse_numstat(output)
+  local fields = vim.split(output, "\0", { plain = true })
+  local numbers = {}
+
+  local index = 1
+  while index <= #fields do
+    index = read_numstat(numbers, fields, index)
+  end
+
+  return numbers
+end
+
+---How much the whole list adds and removes, which is what the panel writes in
+---its header. Counted over the entries and not over the files: a file changed
+---in the index and changed again on disk is two changes to read, and the header
+---counts changes the same way the sections do.
+---@param entries ReviewEntry[]
+---@return integer added
+---@return integer removed
+local function totals(entries)
+  local added, removed = 0, 0
+  for _, entry in ipairs(entries) do
+    added = added + (entry.added or 0)
+    removed = removed + (entry.removed or 0)
+  end
+  return added, removed
+end
+
+---Give each entry of a section the numbers git counted for its path.
+---
+---By section, because the two sides of the index are two different diffs: what
+---`--cached` counts is HEAD against the index, and what the plain call counts is
+---the index against the disk. Untracked files and conflicts are left out
+---altogether: counting the lines of an untracked file would cost a process per
+---file, and a conflict has no two sides to compare.
+---@param entries ReviewEntry[]
+---@param section ReviewSection
+---@param numbers table<string, ReviewNumbers>
+local function count_lines(entries, section, numbers)
+  for _, entry in ipairs(entries) do
+    local found = entry.section == section and numbers[entry.path] or nil
+    if found then
+      entry.added, entry.removed = found.added, found.removed
+    end
+  end
+end
+
 ---Split one record of `git diff-tree -r -z --raw` into the entry it produces.
 ---
 ---The raw format is the one that names the objects on both sides, which is
@@ -169,22 +260,26 @@ local function add_committed(entries, before, after, status, path, orig_path, re
   }
 end
 
----@param output string the NUL-separated output of `git diff-tree -r -z --raw`
+---Read what `git diff-tree -r -z --raw --numstat` wrote: the raw records first,
+---which is what names the objects, and the numstat records after them, which is
+---what counts the lines. Two formats out of one process, so a commit still
+---costs the panel exactly the two it always cost.
+---@param output string the NUL-separated output
 ---@param rev string the commit it was read from — the newest end, in a range
 ---@param base string the rev it was read against
 ---@return ReviewEntry[]
 local function parse_commit(output, rev, base)
   local fields = vim.split(output, "\0", { plain = true })
-  local entries = {}
+  local entries, numbers = {}, {}
 
   local index = 1
   while index <= #fields do
     local field = fields[index]
-    index = index + 1
     -- `:<mode before> <mode after> <object before> <object after> <status>`,
     -- with the paths in the fields that follow.
     local before, after, status = field:match "^:%S+ %S+ (%S+) (%S+) (%S+)$"
     if status then
+      index = index + 1
       local path = fields[index]
       index = index + 1
       -- A rename and a copy name two paths, the old one first. Consumed as
@@ -197,9 +292,12 @@ local function parse_commit(output, rev, base)
         index = index + 1
       end
       if path then add_committed(entries, before, after, status, path, orig_path, rev, base) end
+    else
+      index = read_numstat(numbers, fields, index)
     end
   end
 
+  count_lines(entries, "commit", numbers)
   return entries
 end
 
@@ -339,6 +437,21 @@ function M.discard(root, entry)
   return run_on({ "rm", "--force", "--quiet" }, root, entry)
 end
 
+---Count the lines of one side of the index. `-z` for the same reason the status
+---is read with it: the paths come exactly as they are on disk.
+---@param cwd string
+---@param section "staged"|"unstaged" which side is being counted: the index
+---against HEAD, or the disk against the index
+---@return string output empty when git could not be read, which is a side with
+---no numbers rather than a panel that does not open
+local function numstat(cwd, section)
+  local args = { "diff", "--numstat", "-z" }
+  if section == "staged" then args[#args + 1] = "--cached" end
+  local result = git(args, cwd)
+  if result.code ~= 0 then return "" end
+  return result.stdout or ""
+end
+
 ---Read the state of the repository containing `cwd`.
 ---@param cwd string
 ---@return ReviewStatus|nil status
@@ -359,11 +472,23 @@ function M.status(cwd)
 
   local parsed = parse(result.stdout or "")
   identify(root, parsed.entries)
+
+  -- One process per side of the index, because they are two different diffs.
+  -- Both are asked for even when nothing is staged: what they cost is a process
+  -- that answers nothing, and what telling beforehand would cost is a walk of
+  -- the entries to find out.
+  for _, section in ipairs { "staged", "unstaged" } do
+    count_lines(parsed.entries, section, parse_numstat(numstat(cwd, section)))
+  end
+
+  local added, removed = totals(parsed.entries)
   return {
     root = root,
     title = parsed.branch,
     has_commits = parsed.has_commits,
     entries = parsed.entries,
+    added = added,
+    removed = removed,
   }
 end
 
@@ -387,14 +512,21 @@ end
 ---@return ReviewGitFailure|nil failure
 ---@return string|nil detail git's own error message
 function M.commit_status(root, rev)
-  local described = git({ "show", "--no-patch", "--format=%H%x00%h%x00%s", rev }, root)
+  -- The author and the day, beside what identifies the commit: whoever is
+  -- reading someone else's commit has to know whose it is and from when, and
+  -- that is what the panel writes in the line under its header. In the same
+  -- process that was already being run — it is one more field of the format.
+  local described = git({ "show", "--no-patch", "--date=short", "--format=%H%x00%h%x00%an%x00%ad%x00%s", rev }, root)
   if described.code ~= 0 then return nil, "no_such_rev", vim.trim(described.stderr or "") end
-  local sha, short, subject = unpack(vim.split(vim.trim(described.stdout or ""), "\0", { plain = true }))
+  local sha, short, author, date, subject = unpack(vim.split(vim.trim(described.stdout or ""), "\0", { plain = true }))
   if not sha or sha == "" then return nil, "no_such_rev" end
 
   -- `--root` so the first commit of the repository lists what it added instead
   -- of nothing: it has no parent to be diffed against, and that is exactly the
   -- commit a reviewer opens the graph at the bottom to read.
+  -- `--raw` written out, and not left to be the default: `--numstat` on its own
+  -- replaces the default format, and what would be lost is the object names —
+  -- which are the keys the marks are left under.
   local listed = git({
     "diff-tree",
     "-r",
@@ -404,19 +536,27 @@ function M.commit_status(root, rev)
     "--find-renames",
     "--root",
     "--diff-merges=first-parent",
+    "--raw",
+    "--numstat",
     sha,
   }, root)
   if listed.code ~= 0 then return nil, "git_failed", vim.trim(listed.stderr or "") end
 
+  -- What the commit is read against is what it changed: its first parent. A
+  -- commit that has none — the first of the repository — leaves this rev
+  -- unresolvable, which is an empty left side and not a failure.
+  local entries = parse_commit(listed.stdout or "", sha, sha .. "^")
+  local added, removed = totals(entries)
   return {
     root = root,
     title = ("%s %s"):format(short, subject),
     rev = sha,
     has_commits = true,
-    -- What the commit is read against is what it changed: its first parent. A
-    -- commit that has none — the first of the repository — leaves this rev
-    -- unresolvable, which is an empty left side and not a failure.
-    entries = parse_commit(listed.stdout or "", sha, sha .. "^"),
+    entries = entries,
+    added = added,
+    removed = removed,
+    author = author,
+    date = date,
   }
 end
 
@@ -499,9 +639,17 @@ function M.range_status(root, oldest, newest)
   if not starts_at or counted.code ~= 0 then return nil, "git_failed", vim.trim(counted.stderr or "") end
   local commits = tonumber(vim.trim(counted.stdout or "")) or 0
 
-  local listed = git({ "diff-tree", "-r", "-z", "--no-abbrev", "--find-renames", starts_at, to[1] }, root)
+  local listed =
+    git({ "diff-tree", "-r", "-z", "--no-abbrev", "--find-renames", "--raw", "--numstat", starts_at, to[1] }, root)
   if listed.code ~= 0 then return nil, "git_failed", vim.trim(listed.stderr or "") end
 
+  -- Read against the parent of the oldest commit, and not against the tree
+  -- the comparison used: the empty tree is how git is asked for "everything
+  -- there is", and `<sha>^` is what the reviewer reads on the side of the
+  -- diff — the same unresolvable rev a first commit shows, and the same empty
+  -- side.
+  local entries = parse_commit(listed.stdout or "", to[1], base)
+  local added, removed = totals(entries)
   return {
     root = root,
     -- Written the way git would be given it, `^` included: `a..b` excludes `a`
@@ -513,12 +661,10 @@ function M.range_status(root, oldest, newest)
     rev = to[1],
     range = { oldest = from[1], newest = to[1] },
     has_commits = true,
-    -- Read against the parent of the oldest commit, and not against the tree
-    -- the comparison used: the empty tree is how git is asked for "everything
-    -- there is", and `<sha>^` is what the reviewer reads on the side of the
-    -- diff — the same unresolvable rev a first commit shows, and the same empty
-    -- side.
-    entries = parse_commit(listed.stdout or "", to[1], base),
+    entries = entries,
+    added = added,
+    removed = removed,
+    commits = commits,
   }
 end
 

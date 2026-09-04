@@ -19,11 +19,21 @@ local M = {}
 ---@field diff string key that opens what the line represents
 ---@field diff_alternate string key that opens the same thing the other way
 ---@field diff_conflict string key that opens the three versions of a conflict beside the panel
+---@field preview string key that turns the preview on and off while the panel is open
 ---@field open string key that opens the file in the window beside the panel
 ---@field open_split string key that opens the file in a split
 ---@field open_rev string key that opens the file as it is in another rev, read only
 ---@field diff_rev string key that compares the file with its version in another rev
 ---@field toggle_seen string key that marks the file on the line as seen, or unmarks it
+---@field seen_and_next string key that marks it as seen and moves to the next one still to read
+---@field next_unseen string key of the diff that opens the next file still to read
+---@field previous_unseen string key of the diff that opens the previous one still to read
+---@field next_file string key of the diff that opens the next file, the seen ones included
+---@field previous_file string key of the diff that opens the previous one, the seen ones included
+---@field next_change string key of the diff that goes to the next change inside the file
+---@field previous_change string key of the diff that goes to the previous change inside it
+---@field open_here string key of the diff that opens the file on disk at the point being read
+---@field back_to_diff string key that brings the diff back from the file it was left for
 ---@field annotate string key that writes the annotation of the file on the line
 ---@field annotate_long string key that writes it in the entry of several lines
 ---@field report string key that generates the report of the review under way
@@ -45,6 +55,7 @@ local M = {}
 ---@field position "left"|"right" side of the editor the panel opens on
 ---@field width integer width of the panel in columns
 ---@field seen_display "section"|"dimmed" where a file marked as seen is shown
+---@field preview boolean whether the panel starts with the diff following its cursor
 ---@field neo_tree "close"|"ignore" what to do with a neo-tree window in the way
 ---@field report_directory string|nil where the review report is written
 ---@field mappings ReviewMappings
@@ -67,6 +78,12 @@ local defaults = {
   -- section of its own at the end, which leaves only what is left on the list,
   -- and the dimming in place, which keeps the file where it is.
   seen_display = "section",
+  -- Off, because the reviewer going down the list is most of the time on their
+  -- way to one file: switched on, the sweep pays for reading every file it
+  -- passes. Whoever is sweeping turns it on with the key and turns it off when
+  -- they start reading for real — which is why it is a key and not only this
+  -- option (ADR-0006). This is the state the panel of a tabpage opens in.
+  preview = false,
   neo_tree = "close",
   mappings = {
     close = "q",
@@ -80,6 +97,10 @@ local defaults = {
     -- the other one: the pair reads like the copy keys below, two forms of the
     -- same gesture, and this is the form that keeps the list on screen.
     diff_conflict = "D",
+    -- "p" de "preview", e é uma tecla do painel e não de uma linha dele: o que
+    -- ela liga é o modo de varredura da lista inteira. Numa lista, colar não é
+    -- gesto de ninguém.
+    preview = "p",
     open = "o",
     open_split = "O",
     -- "e" de "em outro rev", e o par lê como os de cima: a tecla simples é a
@@ -91,6 +112,47 @@ local defaults = {
     -- "v" for "visto". The key is local to the panel's buffer, which is a
     -- list, not text to select in visual mode.
     toggle_seen = "v",
+    -- Mark this one and go to the next one still to read, which is the gesture
+    -- that closes a file's review from inside the list. The space bar because
+    -- it is what "the next one" is in every reader that has one — a pager
+    -- taking the page down, a list ticking an item off — and, like "v" for
+    -- visto, because the key is local to a list, where moving one column to the
+    -- right is not a gesture anyone has.
+    --
+    -- It is also the Leader of this configuration, and the one key of the panel
+    -- that waits before acting because of it (`acts_at_once`, in the panel).
+    seen_and_next = "<Space>",
+    -- The same loop from inside the diff, which is where the reviewer is
+    -- nearly all the time: the plain pair walks what is left to read and the
+    -- shifted one walks everything, which is how a file already seen is gone
+    -- back to. The brackets because they are the editor's own idiom for "the
+    -- next one of this kind", and because they cost the file nothing: the
+    -- working tree side of a diff is the reviewer's own buffer, where `<Tab>`
+    -- is indentation and `v` is visual mode.
+    next_unseen = "]f",
+    previous_unseen = "[f",
+    next_file = "]F",
+    previous_file = "[F",
+    -- The pair inside the file, under the same brackets as the two above and
+    -- one scale below them: the reviewer walks the changes of a file and then
+    -- walks to the next file. They are the editor's own keys for the changes of
+    -- a diff, taken over so that the end of a file is not a dead key — there
+    -- they say it is the end, and pressing again goes on into the next file
+    -- still to read, which is where `]f` was going to take the reviewer anyway.
+    next_change = "]c",
+    previous_change = "[c",
+    -- "o" de "abrir", que é a tecla do painel, com o `g` na frente porque esta
+    -- vale de dentro do diff: um dos lados dele é o arquivo do revisor, onde
+    -- `o` sozinho abre uma linha e entra em inserção. O que o `g` shadowa é o
+    -- "ir para o byte N" do editor, que não é gesto de ninguém, e só enquanto o
+    -- diff está montado.
+    open_here = "go",
+    -- A volta é a do editor, e não uma tecla nova: quem entrou no arquivo pelo
+    -- diff anda dali por definições e outros arquivos, e volta pelo caminho que
+    -- veio. O diff fica um passo atrás do arquivo nessa lista — o `<C-o>` segue
+    -- sendo o do editor enquanto o pulo é dentro do arquivo, e é nosso no pulo
+    -- que sairia dele.
+    back_to_diff = "<C-o>",
     -- "a" for "anotar", and the pair reads like the copy keys below: the plain
     -- key is the one-line remark, which is nearly every remark, and the shifted
     -- one opens the entry of several lines for when it is not.
@@ -146,6 +208,12 @@ local function validate(options)
   end
   if options.seen_display ~= "section" and options.seen_display ~= "dimmed" then
     error(('review: seen_display must be "section" or "dimmed", got %q'):format(tostring(options.seen_display)))
+  end
+  -- A typo would be silent otherwise: anything that is not `false` reads as the
+  -- preview being on, and the panel would draw a diff on every move of the
+  -- cursor without the reviewer having asked for it.
+  if type(options.preview) ~= "boolean" then
+    error(("review: preview must be a boolean, got %s"):format(tostring(options.preview)))
   end
   -- A typo here would be silent otherwise: any value that is not "close" reads
   -- as "ignore", so the panel would just quietly stop making room for itself.

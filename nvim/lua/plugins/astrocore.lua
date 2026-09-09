@@ -25,6 +25,9 @@ return {
       },
     },
     autocmds = {
+      -- sqls.nvim >= dfc304f configures itself through Neovim's native LSP
+      -- API; AstroCommunity's legacy callback still calls require("sqls").
+      sqls_attach = false,
       restore_session = {
         {
           event = "VimEnter",

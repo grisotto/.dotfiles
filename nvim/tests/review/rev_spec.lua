@@ -201,7 +201,7 @@ describe("o arquivo em outro rev", function()
       confirm.answer_matching "primeiro"
       panel.feed "e"
 
-      assert.equals(("review://%s/a.txt"):format(short(repo, "HEAD~2")), vim.api.nvim_buf_get_name(0))
+      assert.equals(diff.side_name(repo.root, "a.txt", short(repo, "HEAD~2")), resolved(vim.api.nvim_buf_get_name(0)))
     end)
 
     it("abre no rev de uma branch, com o nome dela no buffer", function()
@@ -213,7 +213,7 @@ describe("o arquivo em outro rev", function()
       panel.feed "e"
 
       assert.same({ "a na outra" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
-      assert.equals("review://outra/a.txt", vim.api.nvim_buf_get_name(0))
+      assert.equals(diff.side_name(repo.root, "a.txt", "outra"), resolved(vim.api.nvim_buf_get_name(0)))
     end)
 
     it("diz na winbar de que rev é o que está na tela, e como se volta", function()
@@ -256,7 +256,7 @@ describe("o arquivo em outro rev", function()
       confirm.answer "main"
 
       assert.has_no.errors(function() panel.feed "e" end)
-      assert.is_not.matches("^review://", name_beside_the_panel())
+      assert.is_false(diff.is_side(name_beside_the_panel()))
     end)
 
     it("continua nomeando o buffer ao ver o mesmo rev de novo", function()
@@ -271,7 +271,7 @@ describe("o arquivo em outro rev", function()
       panel.focus("Unstaged", "a%.txt")
       panel.feed "e"
 
-      assert.equals("review://main/a.txt", vim.api.nvim_buf_get_name(0))
+      assert.equals(diff.side_name(repo.root, "a.txt", "main"), resolved(vim.api.nvim_buf_get_name(0)))
       assert.equals(2, window_count())
     end)
 
@@ -307,7 +307,7 @@ describe("o arquivo em outro rev", function()
       panel.focus("Unstaged", "a%.txt")
       panel.feed "e"
 
-      assert.is_not.matches("^review://", name_beside_the_panel())
+      assert.is_false(diff.is_side(name_beside_the_panel()))
       assert.equals(2, window_count())
     end)
   end)
@@ -342,7 +342,7 @@ describe("o arquivo em outro rev", function()
       assert.same({ "a v1" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
       -- Nomeado pelo caminho que o rev tem, que é como o revisor sabe que está
       -- lendo o arquivo de antes da renomeação.
-      assert.equals(("review://%s/a.txt"):format(short(repo, "HEAD~2")), vim.api.nvim_buf_get_name(0))
+      assert.equals(diff.side_name(repo.root, "a.txt", short(repo, "HEAD~2")), resolved(vim.api.nvim_buf_get_name(0)))
     end)
 
     it("compara a versão do nome antigo com o arquivo de agora", function()
@@ -373,7 +373,7 @@ describe("o arquivo em outro rev", function()
       panel.feed "e"
 
       assert.same({ "a v1" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
-      assert.equals(("review://%s/a.txt"):format(short(repo, "HEAD~2")), vim.api.nvim_buf_get_name(0))
+      assert.equals(diff.side_name(repo.root, "a.txt", short(repo, "HEAD~2")), resolved(vim.api.nvim_buf_get_name(0)))
     end)
 
     it("compara com a versão do commit em revisão, e não com o disco", function()
@@ -391,8 +391,8 @@ describe("o arquivo em outro rev", function()
 
       assert.same({ { "a v1" }, { "a v2" } }, diff.sides())
       assert.same({
-        ("review://%s/a.txt"):format(short(repo, "HEAD~2")),
-        ("review://%s/a.txt"):format(short(repo, "HEAD")),
+        diff.side_name(repo.root, "a.txt", short(repo, "HEAD~2")),
+        diff.side_name(repo.root, "a.txt", short(repo, "HEAD")),
       }, diff.names())
     end)
   end)
@@ -476,7 +476,7 @@ describe("o arquivo em outro rev", function()
       panel.feed "e"
       feed "q"
 
-      assert.is_not.matches("^review://", name_beside_the_panel())
+      assert.is_false(diff.is_side(name_beside_the_panel()))
       assert.is_true(panel.is_open())
       assert.equals(panel.win(), vim.api.nvim_get_current_win())
     end)
@@ -503,7 +503,7 @@ describe("o arquivo em outro rev", function()
       panel.feed "E"
 
       local names = diff.names()
-      assert.equals(("review://%s/a.txt"):format(short(repo, "HEAD~2")), names[1])
+      assert.equals(diff.side_name(repo.root, "a.txt", short(repo, "HEAD~2")), names[1])
       assert.equals(resolved(repo.root .. "/a.txt"), resolved(names[2]))
 
       local right = assert(diff.right(), "o diff não abriu")

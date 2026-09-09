@@ -19,11 +19,31 @@ function M.sides()
   )
 end
 
----The buffer name of each side, left to right.
+---The buffer name of each side, left to right. Resolved, because a side is
+---named under the root of the repository and the fixture lives under a
+---temporary directory, which is a symlink on some machines.
 ---@return string[]
 function M.names()
-  return vim.tbl_map(function(win) return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win)) end, M.windows())
+  return vim.tbl_map(
+    function(win) return vim.fn.resolve(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))) end,
+    M.windows()
+  )
 end
+
+---The name a side that came from git carries: the file under the root of the
+---repository, with the rev written at the end. Written here once so a spec
+---asserting on it does not spell the scheme out again.
+---@param root string
+---@param path string
+---@param rev string
+---@return string
+function M.side_name(root, path, rev) return vim.fn.resolve(("%s/%s@%s"):format(root, path, rev)) end
+
+---Whether a buffer name is one of those: what a spec asks when nothing of the
+---kind should be on the screen.
+---@param name string
+---@return boolean
+function M.is_side(name) return name:match "@[^@/]+$" ~= nil end
 
 ---The winbar of each side, left to right: what says which version the window
 ---is showing, and where the keys of the diff are written.
@@ -68,13 +88,13 @@ end
 function M.focused() return vim.tbl_contains(M.windows(), vim.api.nvim_get_current_win()) end
 
 ---The file the diff on screen is of, read from the side the reviewer edits:
----the name of the buffer, short of the directories, which is how the sides are
----told apart.
+---the name of the buffer, short of the directories and of the rev a side that
+---came from git carries at the end of its name.
 ---@return string
 function M.reading()
   local names = M.names()
   assert(#names > 0, "there is no diff on screen")
-  return vim.fn.fnamemodify(names[#names], ":t")
+  return (vim.fn.fnamemodify(names[#names], ":t"):gsub("@[^@]*$", ""))
 end
 
 return M

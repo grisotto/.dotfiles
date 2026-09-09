@@ -184,7 +184,10 @@ describe("abrir o que está na linha", function()
       panel.feed "<CR>"
       panel.feed "<CR>"
 
-      assert.same({ "review://HEAD/a.txt", "review://índice/a.txt" }, diff.names())
+      assert.same({
+        diff.side_name(repo.root, "a.txt", "HEAD"),
+        diff.side_name(repo.root, "a.txt", "índice"),
+      }, diff.names())
     end)
 
     it("não desmonta o diff da outra aba", function()
@@ -285,9 +288,9 @@ describe("abrir o que está na linha", function()
       panel.feed "D"
 
       assert.same({
-        "review://atual/conflito.txt",
-        "review://base/conflito.txt",
-        "review://entrando/conflito.txt",
+        diff.side_name(repo.root, "conflito.txt", "atual"),
+        diff.side_name(repo.root, "conflito.txt", "base"),
+        diff.side_name(repo.root, "conflito.txt", "entrando"),
       }, diff.names())
     end)
 
@@ -303,9 +306,9 @@ describe("abrir o que está na linha", function()
       panel.feed "D"
 
       assert.same({
-        "review://atual/conflito.txt",
-        "review://base/conflito.txt",
-        "review://entrando/conflito.txt",
+        diff.side_name(repo.root, "conflito.txt", "atual"),
+        diff.side_name(repo.root, "conflito.txt", "base"),
+        diff.side_name(repo.root, "conflito.txt", "entrando"),
       }, diff.names())
     end)
 

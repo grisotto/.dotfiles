@@ -121,6 +121,22 @@ local function two_way_sides(entry)
   return index, { label = "working tree", rev = nil, path = entry.path }
 end
 
+---The name of a side that came from git: the file where it lives, with the rev
+---written after it.
+---
+---A name of the editor is a path to whoever reads it, and something does:
+---the file tree reveals the current buffer on every toggle, taking the name
+---for a path without asking what kind of buffer it is. A name of its own
+---making — `review://<rev>/<caminho>`, which is what this was — is a path that
+---leads nowhere, and the tree goes looking for the directory `review:` and
+---fails out loud on the way. Under the root, it is a path that leads to the
+---repository being reviewed, which is where the tree was going anyway; the
+---node it then does not find is a node it quietly does without.
+---@param root string
+---@param side ReviewDiffSide
+---@return string
+local function side_name(root, side) return ("%s/%s@%s"):format(root, side.path, side.label) end
+
 ---A read-only buffer with the content of one side. Wiped with the window that
 ---shows it: these buffers are the diff, and they have no life after it.
 ---@param root string
@@ -135,9 +151,10 @@ local function rev_buf(root, side)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, side.lines or git.show(root, side.rev, side.path) or { "" })
   vim.bo[bufnr].modifiable = false
 
-  -- The name is what the reviewer reads to tell the sides apart, and it is
-  -- also all the syntax highlighting has to go on.
-  pcall(vim.api.nvim_buf_set_name, bufnr, ("review://%s/%s"):format(side.label, side.path))
+  -- The name is what the reviewer reads to tell the sides apart. The
+  -- highlighting is set from the path alone: the rev at the end of the name
+  -- would be an extension of its own to whoever guessed from the name.
+  pcall(vim.api.nvim_buf_set_name, bufnr, side_name(root, side))
   vim.bo[bufnr].filetype = vim.filetype.match { filename = side.path } or ""
 
   return bufnr

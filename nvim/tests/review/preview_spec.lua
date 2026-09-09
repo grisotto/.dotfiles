@@ -31,7 +31,9 @@ end
 local function drawn()
   local names = diff.names()
   if #names == 0 then return nil end
-  return vim.fn.fnamemodify(names[#names], ":t")
+  -- Short of the directories and of the rev a side that came from git carries
+  -- at the end of its name: what is left is the file the preview is of.
+  return (vim.fn.fnamemodify(names[#names], ":t"):gsub("@[^@]*$", ""))
 end
 
 ---What the preview drew, once it has drawn it.
@@ -391,9 +393,9 @@ describe("o preview", function()
 
       assert.same({ { "atual" }, { "base" }, { "entrando" } }, diff.sides())
       assert.same({
-        "review://atual/conflito.txt",
-        "review://base/conflito.txt",
-        "review://entrando/conflito.txt",
+        diff.side_name(repo.root, "conflito.txt", "atual"),
+        diff.side_name(repo.root, "conflito.txt", "base"),
+        diff.side_name(repo.root, "conflito.txt", "entrando"),
       }, diff.names())
       assert.equals(tabpages + 1, #vim.api.nvim_list_tabpages())
       assert.equals(panel.win(), vim.api.nvim_get_current_win())

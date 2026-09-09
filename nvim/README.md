@@ -398,7 +398,11 @@ arquivo, cada um com o sha curto, a data e o assunto —, e é por ela que nunca
 preciso digitar sha. Com um picker instalado, é ele quem desenha a lista.
 
 `e` abre a versão daquele rev num buffer somente leitura ao lado do painel,
-nomeado `review://<rev>/<caminho>`, que é como se sabe qual versão está na tela.
+nomeado `<caminho>@<rev>` sob a raiz do repositório, que é como se sabe qual
+versão está na tela. O nome fica sob a raiz de propósito: quem lê nome de buffer
+como caminho — o neo-tree revela o buffer atual a cada toggle — cai no
+repositório que está sendo revisado em vez de sair procurando um diretório que
+não existe.
 É consulta, não arquivo para editar. `q` ali volta: a janela recebe de volta o
 arquivo que estava sendo lido — o mesmo que o diff tinha do lado direito — e o
 cursor volta ao painel. Se o rev não tiver o arquivo, `e` avisa em vez de abrir

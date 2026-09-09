@@ -404,9 +404,10 @@ describe("modo commit", function()
       panel.focus("Mudanças", "a%.txt")
       panel.feed "<CR>"
 
-      local names = diff.names()
-      assert.is_not_nil(names[1]:match(sha .. "%^/a%.txt"))
-      assert.is_not_nil(names[2]:match(sha .. "/a%.txt"))
+      assert.same({
+        diff.side_name(repo.root, "a.txt", sha .. "^"),
+        diff.side_name(repo.root, "a.txt", sha),
+      }, diff.names())
     end)
 
     it("abre o diff do primeiro commit com o lado esquerdo vazio", function()

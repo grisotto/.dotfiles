@@ -34,7 +34,6 @@ return {
         "yaml",
         "terraform",
         "markdown",
-        "yaml",
         "regex",
       },
     },

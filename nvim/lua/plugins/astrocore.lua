@@ -53,19 +53,6 @@ return {
       virtual_text = true,
       underline = true,
     },
-    -- passed to `vim.filetype.add`
-    filetypes = {
-      -- see `:h vim.filetype.add` for usage
-      extension = {
-        foo = "fooscript",
-      },
-      filename = {
-        [".foorc"] = "fooscript",
-      },
-      pattern = {
-        [".*/etc/foo/.*"] = "fooscript",
-      },
-    },
     -- vim options can be configured here
     options = {
       opt = { -- vim.opt.<key>
@@ -98,7 +85,7 @@ return {
         -- show HUD REPL log at startup
         ["conjure#log#hud#enabled"] = true,
 
-        -- adicionei mas nao sei se precisa
+        -- `,K` asks the connected REPL for documentation; bare `K` remains LSP hover.
         ["conjure#mapping#doc_word"] = "K",
 
         -- auto repl (babashka)
@@ -107,8 +94,9 @@ return {
         ["conjure#client#clojure#nrepl#connection#auto_repl#cmd"] = nil,
         ["conjure#client#clojure#nrepl#eval#auto_require"] = false,
 
-        -- Test runner: "clojure", "clojuresCRipt", "kaocha"
-        ["conjure#client#clojure#nrepl#test#runner"] = "kaocha",
+        -- Fast feedback through clojure.test. Project gates still run through
+        -- `clojure -M:poly test` and `bb test:cljs`.
+        ["conjure#client#clojure#nrepl#test#runner"] = "clojure",
 
         -- Troubleshoot: Minimise very long lines slow down:
         -- ["conjure#log#treesitter"] = false

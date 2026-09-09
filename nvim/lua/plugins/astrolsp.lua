@@ -26,7 +26,10 @@ return {
           -- "go",
         },
         ignore_filetypes = { -- disable format on save for specified filetypes
-          -- "python",
+          -- Hickory formats Clojure through `bb fmt`, which also repairs parens
+          -- and uses the project's pinned formatter configuration.
+          "clojure",
+          "edn",
         },
       },
       disabled = { -- disable formatting capabilities for the listed language servers
@@ -95,11 +98,5 @@ return {
         },
       },
     },
-    -- A custom `on_attach` function to be run after the default `on_attach` function
-    -- takes two parameters `client` and `bufnr`  (`:h lsp-attach`)
-    on_attach = function(client, bufnr)
-      -- this would disable semanticTokensProvider for all clients
-      -- client.server_capabilities.semanticTokensProvider = nil
-    end,
   },
 }

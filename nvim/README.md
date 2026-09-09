@@ -63,6 +63,41 @@ Por isso o `init.lua` desliga esse plugin (`vim.g.loaded_spellfile_plugin`): o
 dicionário que faltar fica faltando, em silêncio, e nada trava. Instalar outro
 idioma é a mesma linha acima com outro `.spl`.
 
+## Desenvolvimento do Agilis
+
+Inicie o ambiente em qualquer terminal:
+
+```sh
+tmux-agilis3.sh
+```
+
+O launcher sobe os containers, o backend com nREPL na porta 7888, o watcher do
+Shadow CLJS e a webapp. Dentro de um arquivo do projeto, `<Leader>a` abre no
+which-key os comandos específicos:
+
+| Tecla | Comando | O que faz |
+| --- | --- | --- |
+| `<Leader>ab` | `:AgilisConnectBackend` | Conecta o Conjure ao backend na porta 7888 |
+| `<Leader>as` | `:AgilisConnectShadow` | Conecta à porta dinâmica do Shadow e seleciona o build `main` |
+| `<Leader>af` | `:AgilisFormat` | Salva e formata o arquivo atual com `bb fmt` |
+| `<Leader>at` | `:AgilisTestBrick` | Obtém o brick pelo caminho e executa o teste Polylith dele |
+| `<Leader>aT` | `:AgilisTestCljs` | Executa `bb test:cljs` |
+| `<Leader>al` | `:AgilisLint` | Executa clj-kondo nos componentes, bases e projetos |
+| `<Leader>ah` | `:AgilisHalt` | Para o backend pelo nREPL |
+| `<Leader>ao` | `:AgilisOpen` | Abre `http://localhost:3000/` |
+
+Os comandos que produzem saída abrem um terminal horizontal. O format-on-save
+fica desligado para Clojure e EDN: este projeto usa `bb fmt`, que combina o
+formatador configurado no repositório com reparo de parênteses.
+
+O `<LocalLeader>` é vírgula. Os gestos principais do Conjure são `,ee` para a
+forma sob o cursor, `,er` para a forma de topo, `,eb` para o buffer e `,lg` para
+o log. `,K` consulta a documentação no REPL; `K` continua sendo o hover do LSP.
+`,ts` alterna entre fonte e teste.
+
+Parinfer roda em modo smart e pode ser alternado com `:ParinferToggle`. Paredit
+usa `>(`/`>)` para trazer conteúdo para a forma e `<(`/`<)` para expulsá-lo.
+
 ## Painel de revisão
 
 A janela lateral que lista os arquivos em revisão, agrupados por estado, e que é

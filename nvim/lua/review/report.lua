@@ -30,9 +30,10 @@ local M = {}
 
 ---@class ReviewPlacement one annotation, in the file as it is now
 ---@field annotation ReviewAnnotation
----@field line integer|nil where it stands now; absent on a file annotation and
----on a displaced one
----@field snippet string|nil the line of code it is about, as it reads now
+---@field line integer|nil where it stands now, the first line of a run; absent
+---on a file annotation and on a displaced one
+---@field end_line integer|nil where a run of lines ends now; absent on a line alone
+---@field snippet string[]|nil the lines of code it is about, as they read now
 ---@field displaced boolean whether the anchor was not found (ADR-0003)
 
 ---The lines of a file of the repository, read once however many annotations
@@ -50,29 +51,43 @@ local function lines_of(repository, path, cache)
   return cache[path] or nil
 end
 
----The line the anchor is on now: the one it was written on, when the text is
----still there, and otherwise the nearest line that carries it. Nearest,
----because an edit above the annotation moves every line below it by the same
----amount, and the occurrence closest to where it was is the one it was written
----about.
+---The lines of an anchor, one per line of the file it was written about: a
+---remark on a run of lines carries all of them.
+---@param written ReviewAnnotation with an anchor
+---@return string[]
+local function anchor_lines(written) return vim.split(written.anchor, "\n", { plain = true }) end
+
+---The line the anchor starts on now: the one it was written on, when the text
+---is still there, and otherwise the nearest line from which the file carries it
+---again. Nearest, because an edit above the annotation moves every line below
+---it by the same amount, and the occurrence closest to where it was is the one
+---it was written about.
 ---
 ---The text has to match exactly: a line that was re-indented or had a word
 ---changed is not the line the remark was written about, and answering with it
----would be the wrong line dressed up as the right one.
+---would be the wrong line dressed up as the right one. A run of lines matches
+---whole, in order and together: its lines scattered around the file are not the
+---passage the remark was written about.
 ---@param lines string[]
----@param written ReviewAnnotation
+---@param anchor string[] the lines of the anchor
+---@param written_at integer the line the annotation was written on
 ---@return integer|nil line nil when the anchor is not in the file anymore
-local function anchored_at(lines, written)
-  -- An annotation tied to a line always carries the text of that line. One
-  -- that does not is not a document this code wrote, and there is nothing in
-  -- it to look for — least of all a line that happens to be missing too.
-  if not written.anchor then return nil end
-  if lines[written.line] == written.anchor then return written.line end
+local function anchored_at(lines, anchor, written_at)
+  ---@param start integer
+  ---@return boolean
+  local function holds_at(start)
+    for offset, text in ipairs(anchor) do
+      if lines[start + offset - 1] ~= text then return false end
+    end
+    return true
+  end
+
+  if holds_at(written_at) then return written_at end
 
   local nearest = nil
-  for lnum, text in ipairs(lines) do
-    if text == written.anchor and (not nearest or math.abs(lnum - written.line) < math.abs(nearest - written.line)) then
-      nearest = lnum
+  for start = 1, #lines - #anchor + 1 do
+    if holds_at(start) and (not nearest or math.abs(start - written_at) < math.abs(nearest - written_at)) then
+      nearest = start
     end
   end
   return nearest
@@ -91,10 +106,23 @@ local function place(repository, annotations)
       placements[#placements + 1] = { annotation = written, displaced = false }
     else
       local lines = lines_of(repository, written.path, read)
-      local line = lines and anchored_at(lines, written)
-      placements[#placements + 1] = line
-          and { annotation = written, line = line, snippet = lines[line], displaced = false }
-        or { annotation = written, displaced = true }
+      -- An annotation tied to a line always carries the text of that line. One
+      -- that does not is not a document this code wrote, and there is nothing in
+      -- it to look for — least of all a line that happens to be missing too.
+      local anchor = written.anchor and anchor_lines(written)
+      local line = lines and anchor and anchored_at(lines, anchor, written.line)
+      if line then
+        local last = line + #anchor - 1
+        placements[#placements + 1] = {
+          annotation = written,
+          line = line,
+          end_line = annotation.end_line(line, last),
+          snippet = vim.list_slice(lines, line, last),
+          displaced = false,
+        }
+      else
+        placements[#placements + 1] = { annotation = written, displaced = true }
+      end
     end
   end
   return placements
@@ -133,19 +161,19 @@ end
 ---answers by name alone, which is all there is to go on for a file that is not
 ---open.
 ---
----A remark written on an empty line quotes nothing: a fence with nothing
----inside it is a hole in the document, and the line number above it already
----says where the remark is.
+---A remark written on empty lines quotes nothing: a fence with nothing inside
+---it is a hole in the document, and the line number above it already says
+---where the remark is.
 ---@param lines string[] the document being built, appended to
 ---@param path string the file the snippet came from
----@param snippet string|nil
+---@param snippet string[]|nil the lines of code
 local function quote(lines, path, snippet)
-  if not snippet or snippet == "" then return end
+  if not snippet or table.concat(snippet) == "" then return end
 
   local language = vim.filetype.match { filename = path } or ""
-  local edge = fence(snippet)
+  local edge = fence(table.concat(snippet, "\n"))
   lines[#lines + 1] = edge .. language
-  lines[#lines + 1] = snippet
+  vim.list_extend(lines, snippet)
   lines[#lines + 1] = edge
   lines[#lines + 1] = ""
 end
@@ -165,6 +193,19 @@ end
 ---@param plural string
 ---@return string
 local function counted(count, singular, plural) return ("%d %s"):format(count, count == 1 and singular or plural) end
+
+---The lines a remark is about, as the report writes them.
+---@param first integer
+---@param last integer|nil the end of a run; nil on a line alone
+---@return string e.g. "linha 2", "linhas 2–4"
+local function span(first, last)
+  if last then return ("linhas %d–%d"):format(first, last) end
+  return ("linha %d"):format(first)
+end
+
+---@param text string
+---@return string the same, starting with an upper case letter
+local function capitalized(text) return (text:gsub("^%l", string.upper)) end
 
 ---What the report says it is, before anything else in it: which review it came
 ---from, and how much of it there is.
@@ -199,7 +240,8 @@ local function file_section(lines, path, placements)
   lines[#lines + 1] = "## " .. path
   lines[#lines + 1] = ""
   for _, placement in ipairs(placements) do
-    lines[#lines + 1] = placement.line and ("**Linha %d**"):format(placement.line) or "**O arquivo inteiro**"
+    local about = placement.line and capitalized(span(placement.line, placement.end_line)) or "O arquivo inteiro"
+    lines[#lines + 1] = ("**%s**"):format(about)
     lines[#lines + 1] = ""
     quote(lines, path, placement.snippet)
     remark(lines, placement.annotation.text)
@@ -221,9 +263,9 @@ local function displaced_section(lines, placements)
   lines[#lines + 1] = ""
   for _, placement in ipairs(placements) do
     local written = placement.annotation
-    lines[#lines + 1] = ("**%s · linha %d quando foi escrita**"):format(written.path, written.line)
+    lines[#lines + 1] = ("**%s · %s quando foi escrita**"):format(written.path, span(written.line, written.end_line))
     lines[#lines + 1] = ""
-    quote(lines, written.path, written.anchor)
+    quote(lines, written.path, written.anchor and anchor_lines(written))
     remark(lines, written.text)
   end
 end
@@ -294,6 +336,7 @@ local function fill_quickfix(repository, placements)
     items[#items + 1] = {
       filename = repository .. "/" .. placement.annotation.path,
       lnum = placement.line or 0,
+      end_lnum = placement.end_line,
       col = placement.line and 1 or 0,
       -- Said out loud, because the editor decides it by the line number: a
       -- point without one is filed as invalid, and `:cnext` skips exactly the
@@ -347,24 +390,27 @@ end
 ---@return string|nil path where it was written; nil when there was nothing to
 ---write, or writing failed
 ---@return integer count of annotations in it
+---@return string[]|nil lines of the document, written or not — it is built
+---before the file is; nil when there was nothing to write
 function M.generate(repository, mode)
   local path = report_path(repository, mode.key)
   local placements = place(repository, annotation.of_mode(repository, mode))
   if #placements == 0 then
     vim.fn.delete(path)
     vim.fn.setqflist({}, " ", { title = QUICKFIX_TITLE, items = {} })
-    return nil, 0
+    return nil, 0, nil
   end
   table.sort(placements, reads_before)
 
+  local lines = document(repository, mode, placements)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
-  if vim.fn.writefile(document(repository, mode, placements), path) ~= 0 then
+  if vim.fn.writefile(lines, path) ~= 0 then
     vim.notify("review: não foi possível gravar o relatório em " .. path, vim.log.levels.WARN)
-    return nil, #placements
+    return nil, #placements, lines
   end
 
   fill_quickfix(repository, placements)
-  return path, #placements
+  return path, #placements, lines
 end
 
 return M

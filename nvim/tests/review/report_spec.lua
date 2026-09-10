@@ -1,3 +1,4 @@
+local clipboard = require "tests.helpers.clipboard"
 local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
@@ -7,6 +8,7 @@ local panel = require "tests.helpers.panel"
 local quickfix = require "tests.helpers.quickfix"
 local report = require "tests.helpers.report"
 local review = require "review"
+local visual = require "tests.helpers.visual"
 
 local config_root = vim.fn.getcwd()
 
@@ -55,11 +57,26 @@ local function annotate_file(section, pattern, text)
   panel.feed "a"
 end
 
+---Annotate a run of lines of a file, the way the reviewer does it: open the
+---file from the panel, select the lines, press the key that annotates on them.
+---@param section string
+---@param pattern string
+---@param first integer
+---@param last integer
+---@param text string
+local function annotate_selection(section, pattern, first, last, text)
+  panel.focus(section, pattern)
+  panel.feed "o"
+  input.answer(text)
+  visual.press_on_lines(first, last, "<Leader>ga")
+end
+
 describe("relatório de revisão", function()
   before_each(function()
     review.setup {}
     fixture.data_dir()
     input.install()
+    clipboard.clear()
   end)
 
   after_each(function()
@@ -130,6 +147,55 @@ describe("relatório de revisão", function()
         "",
         "por que mudou?",
       }, report.section "a.py")
+    end)
+
+    it("cita todas as linhas de uma anotação de trecho", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_selection("Unstaged", "a%.txt", 2, 3, "estas duas andam juntas")
+      panel.feed "R"
+
+      assert.same({
+        "**Linhas 2–3**",
+        "",
+        "```text",
+        "dois alterado",
+        "três",
+        "```",
+        "",
+        "estas duas andam juntas",
+      }, report.section "a.txt")
+      assert.same(
+        { { file = repo.root .. "/a.txt", lnum = 2, end_lnum = 3, text = "estas duas andam juntas" } },
+        quickfix.items()
+      )
+    end)
+
+    it("vai para a área de transferência, para ser colado onde for preciso", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "arrumar isso")
+      panel.feed "R"
+
+      -- Com a quebra no fim: o documento vai linha a linha, e é assim que o
+      -- editor entrega ao clipboard um texto copiado por linhas.
+      assert.equals(report.text() .. "\n", clipboard.content())
+      -- E para o registro sem nome, que é o do `p` do próprio editor.
+      assert.equals(report.text(), table.concat(vim.fn.getreg('"', 1, true), "\n"))
+    end)
+
+    it("não mexe na área de transferência quando não há anotação para relatar", function()
+      -- O que o revisor tinha copiado vale mais que um relatório vazio, que não
+      -- diz nada.
+      local repo = repo_with_a_change()
+      vim.fn.setreg("+", "o que o revisor tinha copiado")
+
+      open_in(repo.root)
+      panel.feed "R"
+
+      assert.equals("o que o revisor tinha copiado", clipboard.content())
     end)
 
     it("é gravado fora do repositório revisado", function()
@@ -295,6 +361,43 @@ describe("relatório de revisão", function()
       assert.is_truthy(displaced:find("**a.txt · linha 2 quando foi escrita**", 1, true))
       assert.is_truthy(displaced:find("```text\ndois alterado\n```", 1, true))
       assert.is_truthy(displaced:find("arrumar isso", 1, true))
+    end)
+
+    it("reancora o trecho onde as linhas dele estão juntas, e não onde uma delas está sozinha", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_selection("Unstaged", "a%.txt", 2, 3, "estas duas andam juntas")
+      -- A primeira linha do trecho entra solta no topo, mais perto de onde ele
+      -- estava do que o próprio trecho, que desceu duas linhas: sozinha ela não
+      -- é o trecho sobre o qual a anotação foi escrita.
+      repo:write("a.txt", "dois alterado\nzero\num\ndois alterado\ntrês\n")
+      panel.feed "R"
+
+      assert.same({
+        "**Linhas 4–5**",
+        "",
+        "```text",
+        "dois alterado",
+        "três",
+        "```",
+        "",
+        "estas duas andam juntas",
+      }, report.section "a.txt")
+    end)
+
+    it("entrega deslocado o trecho em que uma das linhas mudou", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_selection("Unstaged", "a%.txt", 2, 3, "estas duas andam juntas")
+      repo:write("a.txt", "um\ndois alterado\ntrês mudou\n")
+      panel.feed "R"
+
+      assert.same({ "Anotações deslocadas" }, report.headings())
+      local displaced = table.concat(report.section "Anotações deslocadas", "\n")
+      assert.is_truthy(displaced:find("**a.txt · linhas 2–3 quando foi escrita**", 1, true))
+      assert.is_truthy(displaced:find("```text\ndois alterado\ntrês\n```", 1, true))
     end)
   end)
 

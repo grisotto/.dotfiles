@@ -74,7 +74,9 @@ acionada, e as afirmações feitas sobre cinco coisas apenas:
 13. a tabela de mapeamentos do próprio editor
     (`nvim_buf_get_keymap`): a descrição que cada tecla do painel carrega, que é
     o que o which-key mostra, e a espera do `nowait` na tecla que também é o
-    Leader do revisor;
+    Leader do revisor — e, por `maparg`, as teclas globais de anotar que o
+    `setup` mapeia: que elas estão lá, com a tecla das opções, e que o diff não
+    põe uma dele por cima;
 14. o que ele diz em voz alta, lido da UI de notificação do editor de teste
     (`notify.messages`, `notify.last`), que é onde a mensagem aparece para o
     revisor.
@@ -213,6 +215,20 @@ terceiro item) no teste de que ela sai do arquivo do revisor quando outro diff �
 montado — uma tecla nossa esquecida no arquivo dele é o que esse teste existe
 para impedir.
 
+A anotação de um trecho não trouxe item novo além de uma leitura: o modo em que
+o editor ficou (`vim.fn.mode()`), que é o que o revisor vê no canto da tela.
+Sair do modo visual antes de a entrada abrir é o que se afirma com ela — uma
+entrada aberta por cima de uma seleção ainda viva devolveria ao revisor linhas
+selecionadas que ele não pediu. O resto é lido pelo oitavo, pelo nono, pelo
+décimo e pelo décimo primeiro: o que a entrada diz (`a.txt:2-3`), o que o
+documento guarda (`end_line` e a âncora de várias linhas), o que o relatório
+cita e onde a quickfix aponta. A tecla apertada é a de verdade: as teclas
+globais de anotar são mapeadas pelo `setup`, que todo spec chama, e a seleção e
+a tecla vão ao editor como uma sequência só (`visual.press_on_lines`).
+
+O relatório ir para a área de transferência é lido pelo quinto item, como os
+caminhos copiados: o que se afirma é que o texto copiado é o documento gravado.
+
 O segundo grafo, o do gitgraph, fica sem teste como a delegação ao diffview e ao
 neogit ficam, e pelo mesmo motivo (ADR-0005): é uma chamada de uma linha, e
 cobri-la exigiria um backend falso. O que o hook dele faz — `review.commit` — é
@@ -350,6 +366,11 @@ estar anotando (`entry.title`), escreve nela como o revisor escreve
 (`entry.type`) e termina pelas duas teclas da borda (`entry.save`,
 `entry.cancel`).
 
+`tests/helpers/visual.lua` seleciona linhas na janela em que o revisor está e
+aperta uma tecla sobre a seleção (`visual.press_on_lines(2, 3, "<Leader>ga")`),
+como o `graph.choose_range` faz no grafo. Uma última linha acima da primeira é
+a seleção feita de baixo para cima.
+
 `tests/helpers/document.lua` lê de volta o documento de estado gravado no
 diretório de dados do editor: `document.annotations()` devolve as anotações e
 `document.exists()` diz se a revisão gravou alguma coisa. Ele acha o documento
@@ -366,7 +387,9 @@ dentro do repositório revisado. Ele o acha varrendo o diretório de dados, como
 helper do documento de estado faz.
 
 `tests/helpers/quickfix.lua` lê a quickfix do editor: `quickfix.items()` devolve
-os pontos da lista — arquivo, linha e o texto que ela mostra —, `quickfix.title()`
+os pontos da lista — arquivo, linha, a última linha num ponto de trecho
+(`end_lnum`, ausente num ponto de uma linha) e o texto que ela mostra —,
+`quickfix.title()`
 o título que ela recebeu e `quickfix.is_open()` se a janela dela apareceu.
 `quickfix.clear()` num `after_each` joga fora as listas que o editor está
 guardando, para o teste seguinte não achar as do anterior.

@@ -1,3 +1,4 @@
+local diff = require "tests.helpers.diff"
 local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
@@ -5,6 +6,7 @@ local fixture = require "tests.helpers.fixture"
 local input = require "tests.helpers.input"
 local panel = require "tests.helpers.panel"
 local review = require "review"
+local visual = require "tests.helpers.visual"
 
 local config_root = vim.fn.getcwd()
 
@@ -37,6 +39,15 @@ local function repo_with_a_change()
   repo:commit_file("a.txt", "um\ndois\ntrês\n")
   repo:write("a.txt", "um\ndois alterado\ntrês\n")
   return repo
+end
+
+---Select lines `first` to `last` of the file being read and press the key that
+---annotates on them — the real one, which `review.setup` maps.
+---@param first integer
+---@param last integer
+---@param opts { long: boolean|nil }|nil
+local function annotate_selection(first, last, opts)
+  visual.press_on_lines(first, last, opts and opts.long and "<Leader>gA" or "<Leader>ga")
 end
 
 describe("anotação", function()
@@ -152,6 +163,166 @@ describe("anotação", function()
 
       assert.same({}, input.prompts())
       assert.same({}, document.annotations())
+    end)
+  end)
+
+  describe("anotação de trecho", function()
+    it("prende a anotação às linhas selecionadas, com o texto delas como âncora", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 1)
+      input.answer "estas duas andam juntas"
+      annotate_selection(2, 3)
+
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals(2, annotations[1].line)
+      assert.equals(3, annotations[1].end_line)
+      assert.equals("dois alterado\ntrês", annotations[1].anchor)
+      assert.equals("estas duas andam juntas", annotations[1].text)
+      -- A entrada diz o trecho, como diz a linha: quem selecionou demais vê
+      -- isso antes de escrever.
+      assert.is_truthy(input.prompts()[1]:match "a%.txt:2%-3")
+    end)
+
+    it("sai do modo visual antes de perguntar", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 1)
+      input.answer "fora da seleção"
+      annotate_selection(1, 2)
+
+      assert.equals("n", vim.fn.mode())
+    end)
+
+    it("vale na seleção feita de baixo para cima", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 1)
+      input.answer "de trás para frente"
+      annotate_selection(3, 2)
+
+      local annotations = document.annotations()
+      assert.same({ 2, 3 }, { annotations[1].line, annotations[1].end_line })
+    end)
+
+    it("é a anotação da linha quando a seleção tem uma linha só", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "primeira"
+      annotate_selection(2, 2)
+      input.answer "segunda"
+      review.annotate()
+
+      assert.same({ "", "primeira" }, input.defaults())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.is_nil(annotations[1].end_line)
+      assert.equals("segunda", annotations[1].text)
+    end)
+
+    it("edita o trecho já anotado, e é outra anotação que a da primeira linha dele", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "só a linha"
+      review.annotate()
+      input.answer "o trecho"
+      annotate_selection(2, 3)
+      input.answer "o trecho, corrigido"
+      annotate_selection(2, 3)
+
+      assert.same({ "", "", "o trecho" }, input.defaults())
+      local texts = vim.tbl_map(function(written) return written.text end, document.annotations())
+      table.sort(texts)
+      assert.same({ "o trecho, corrigido", "só a linha" }, texts)
+    end)
+
+    it("abre a entrada longa sobre a seleção", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 1)
+      annotate_selection(1, 3, { long = true })
+
+      assert.is_true(entry.is_open())
+      assert.equals("Anotação em a.txt:1-3", entry.title())
+      entry.type "três linhas\nde uma vez"
+      entry.save()
+
+      assert.same({ 1, 3 }, { document.annotations()[1].line, document.annotations()[1].end_line })
+    end)
+  end)
+
+  describe("na winbar do diff", function()
+    it("escreve as teclas de anotar quando o lado da direita é o arquivo do revisor", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "<CR>"
+
+      local bars = diff.winbars()
+      assert.matches("anotar%s+<Leader>ga%s+<Leader>gA", bars[#bars])
+      assert.is_not.matches("anotar", bars[1])
+    end)
+
+    it("não oferece anotar num diff em que os dois lados são versões", function()
+      -- No staged os dois lados são o HEAD e o índice: a anotação ali seria
+      -- recusada, e uma tecla oferecida para ser recusada é pior que nenhuma.
+      local repo = repo_with_a_change()
+      repo:add "a.txt"
+
+      open_in(repo.root)
+      panel.focus("Staged", "a%.txt")
+      panel.feed "<CR>"
+
+      local bars = diff.winbars()
+      assert.equals(2, #bars)
+      assert.is_not.matches("anotar", bars[2])
+    end)
+
+    it("não toma para o diff as teclas de anotar, que são do editor inteiro", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "<CR>"
+
+      -- The two values `assert` hands back would both go into the call.
+      local win = assert(diff.right(), "o diff não abriu")
+      vim.api.nvim_set_current_win(win)
+      -- A tecla que responde no arquivo do revisor continua sendo a global:
+      -- `buffer` é 0 num mapeamento global e 1 num local, que é o que o diff
+      -- poria por cima dela.
+      for _, key in ipairs { "<Leader>ga", "<Leader>gA" } do
+        local map = vim.fn.maparg(key, "n", false, true)
+        assert.equals("Anotar", (map.desc or ""):match "^Anotar")
+        assert.equals(0, map.buffer)
+      end
+    end)
+
+    it("escreve a tecla que está mapeada, também quando o revisor a troca", function()
+      review.setup { mappings = { annotate_line = "<Leader>n", annotate_line_long = "<Leader>N" } }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "<CR>"
+
+      local bars = diff.winbars()
+      assert.matches("anotar%s+<Leader>n%s+<Leader>N", bars[#bars])
+      -- A tecla antiga sai, nos dois modos: trocar é mover, e não somar.
+      assert.equals("", vim.fn.maparg("<Leader>ga", "n"))
+      assert.equals("", vim.fn.maparg("<Leader>ga", "x"))
+      assert.is_not.equals("", vim.fn.maparg("<Leader>n", "n"))
+      assert.is_not.equals("", vim.fn.maparg("<Leader>n", "x"))
     end)
   end)
 

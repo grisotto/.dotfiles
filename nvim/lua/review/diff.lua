@@ -37,7 +37,8 @@ local M = {}
 ---@field key string
 ---@field label string what it does, in the reviewer's words, as the winbar has room for it
 ---@field desc string|nil the whole of it, for the mapping; the label when absent
----@field run fun()
+---@field run fun()|nil nil on a key of the editor that the diff only names: it is
+---written in the winbar and mapped by whoever it belongs to
 
 ---@class ReviewDiffMount what one diff put on the screen, and everything that
 ---has to be given back when it leaves
@@ -510,8 +511,14 @@ local function build(target, sides, focused_side, keys, entry)
     if not vim.api.nvim_tabpage_is_valid(tab) then mounted_by_tab[tab] = nil end
   end
 
+  -- Only the keys the diff runs are mapped here, and only those are taken off
+  -- when it goes. A key it only names belongs to whoever mapped it, and one
+  -- with no function of ours would look, when the diff is taken down, exactly
+  -- like any mapping of the reviewer's that has no function either.
+  local mapped = vim.tbl_filter(function(key) return key.run ~= nil end, keys)
+
   ---@type ReviewDiffMount
-  local mount = { wins = opened, bufs = bufs, winbar = {}, keys = keys, mappings = {}, entry = entry }
+  local mount = { wins = opened, bufs = bufs, winbar = {}, keys = mapped, mappings = {}, entry = entry }
   local tab = vim.api.nvim_get_current_tabpage()
   -- A diff on the screen is the diff to come back to, so whatever way back a
   -- file of this tabpage was holding is over — including the one this very
@@ -528,11 +535,11 @@ local function build(target, sides, focused_side, keys, entry)
     -- written: two keys of the diff configured to the same lhs would otherwise
     -- have the second one read the first one's mapping and hand a mapping of
     -- ours back to the reviewer's file as if it were theirs.
-    for _, key in ipairs(keys) do
+    for _, key in ipairs(mapped) do
       local previous = mapping_of(bufnr, key.key)
       if previous then mount.mappings[#mount.mappings + 1] = { bufnr = bufnr, map = previous } end
     end
-    for _, key in ipairs(keys) do
+    for _, key in ipairs(mapped) do
       vim.keymap.set("n", key.key, key.run, { buffer = bufnr, nowait = true, desc = key.desc or key.label })
     end
   end
@@ -803,22 +810,50 @@ local function opening_key(target)
   }
 end
 
+---The keys that annotate the line being read, or the lines selected in it.
+---
+---They are not the diff's: they are global, and work in any file of the
+---repository (`lua/plugins/review.lua`). The diff only names them, because the
+---diff is where the reviewer is reading when the remark occurs to them, and a
+---key nobody sees is a key nobody presses. Named last: a winbar too long for its
+---window keeps the name of the side and the end of the keys, and loses what is
+---between them.
+---@return ReviewDiffKey[]
+local function annotating_keys()
+  local mappings = config.options.mappings
+  -- One label for the pair, which is what the winbar writes them under.
+  local label = "anotar"
+  return {
+    { key = mappings.annotate_line, label = label },
+    { key = mappings.annotate_line_long, label = label },
+  }
+end
+
 ---What the diff of a file under review answers to: the way out, and the keys
 ---that move the review to another file. Both of the presentations built here
 ---that show the change on a line get them — a reviewer walking the list is
 ---walking it whether the file is conflicted or not.
 ---
----What a rev is read or compared in does not: those are consultations of one
----file, where the key that matters is the one that gives the window back, and a
----key that moved the review would leave the reviewer somewhere they did not ask
----to be with nothing to come back to.
+---The keys that annotate go along only when the side on the right — where the
+---eye ends up, and where the winbar is written — is the reviewer's own file. An
+---annotation is written on the file itself, and on a side that is a rev — both
+---sides of a staged diff, every version of a conflict — the key is refused: a
+---key offered to be refused is worse than no key at all.
+---
+---What a rev is read or compared in does not get any of them: those are
+---consultations of one file, where the key that matters is the one that gives
+---the window back, and a key that moved the review would leave the reviewer
+---somewhere they did not ask to be with nothing to come back to.
 ---@param target ReviewTarget the line the diff is being built of
+---@param sides ReviewDiffSide[] left to right
 ---@return ReviewDiffKey[]
-local function reviewing_keys(target)
-  return vim.list_extend(
+local function reviewing_keys(target, sides)
+  local keys = vim.list_extend(
     vim.list_extend(vim.list_extend({ closing_key(target.panel) }, { opening_key(target) }), changing_keys()),
     stepping_keys()
   )
+  if sides[#sides].rev == nil then vim.list_extend(keys, annotating_keys()) end
+  return keys
 end
 
 ---Which side the reviewer is left in, and none at all when the diff is not to
@@ -845,7 +880,7 @@ end
 ---where it is, which is what the preview of the list needs
 function M.open(target, opts)
   local left, right = two_way_sides(target.entry)
-  build(target, { left, right }, focus_on(opts, 2), reviewing_keys(target), target.entry)
+  build(target, { left, right }, focus_on(opts, 2), reviewing_keys(target, { left, right }), target.entry)
 end
 
 ---The line of the list the diff of this tabpage is showing, which is how the
@@ -897,7 +932,7 @@ function M.open_conflict(target, opts)
   end
   -- Left in our own version: it is the side the reviewer knows, and the one
   -- the incoming change is being judged against.
-  build(target, sides, focus_on(opts, 1), reviewing_keys(target), target.entry)
+  build(target, sides, focus_on(opts, 1), reviewing_keys(target, sides), target.entry)
 end
 
 ---The name this file goes by in `rev`, and what is under it there.

@@ -1172,7 +1172,7 @@ local function panel_actions()
     {
       key = mappings.report,
       label = "Gerar o relatório",
-      desc = "Gerar o relatório da revisão e pôr os pontos anotados na quickfix",
+      desc = "Gerar o relatório da revisão, copiá-lo para a área de transferência e pôr os pontos na quickfix",
       -- Not `on_entry`: the report is about the review, not about the line the
       -- cursor happens to be on, and it is generated from the header of the
       -- panel as much as from a file in it.

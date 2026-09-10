@@ -28,6 +28,10 @@ acceptance:
   done: true
 - title: As anotações sobrevivem a reabrir o editor e ficam fora do repositório
   done: true
+- title: A mesma tecla no modo visual cria anotação presa ao trecho selecionado, citado inteiro no relatório
+  done: true
+- title: A winbar do diff escreve as teclas de anotar quando o lado da direita é o arquivo do revisor
+  done: true
 deps:
 - nvi-01m1d6hwc7f9
 ---

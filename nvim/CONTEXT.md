@@ -107,15 +107,21 @@ _Avoid_: lido, revisado, checado, resolvido
 
 **Anotação**:
 Um texto que o revisor escreve sobre um ponto do código, preso a um arquivo e
-opcionalmente a uma linha. É observação de revisão, não comentário de código.
+opcionalmente a uma linha ou a um trecho. É observação de revisão, não
+comentário de código.
 _Avoid_: comentário, review comment, TODO
 
 **Anotação de arquivo**:
 Anotação presa ao arquivo inteiro, sem linha.
 
+**Trecho**:
+Linhas seguidas de um arquivo, selecionadas para receber uma anotação só. É um
+ponto diferente da primeira linha dele; um trecho de uma linha é aquela linha.
+_Avoid_: range, bloco, seleção
+
 **Ponto**:
-Onde uma anotação se prende: o arquivo, o modo, e a linha quando houver. Dois
-textos escritos no mesmo ponto são um só, corrigido.
+Onde uma anotação se prende: o arquivo, o modo, e a linha ou o trecho quando
+houver. Dois textos escritos no mesmo ponto são um só, corrigido.
 _Avoid_: local, posição, alvo
 
 **Entrada da anotação**:
@@ -125,10 +131,10 @@ quando não couber.
 _Avoid_: prompt, input, caixa
 
 **Âncora**:
-O texto de uma linha usado para reencontrá-la depois que o arquivo muda, no
-lugar do número dela. É o que a anotação guarda, e é também como a ida ao
-arquivo encontra o ponto que estava sendo lido: a linha vista num rev não tem o
-mesmo número no disco.
+O texto de uma linha — ou de todas as de um trecho — usado para reencontrá-la
+depois que o arquivo muda, no lugar do número dela. É o que a anotação guarda,
+e é também como a ida ao arquivo encontra o ponto que estava sendo lido: a linha
+vista num rev não tem o mesmo número no disco.
 _Avoid_: contexto, snippet
 
 **Reancoragem**:
@@ -144,7 +150,8 @@ _Avoid_: anotação órfã, quebrada, inválida
 
 **Relatório de revisão**:
 O documento gerado a partir das anotações de um modo, feito para sair do editor
-(colar em PR, ticket, mensagem).
+(colar em PR, ticket, mensagem) — por isso gerá-lo também o põe na área de
+transferência.
 _Avoid_: export, dump, relatório
 
 **Raiz do projeto**:

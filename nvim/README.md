@@ -121,13 +121,23 @@ Valem em qualquer buffer.
 | Tecla | O que faz |
 | --- | --- |
 | `<Leader>r` | Abre o painel, ou fecha se já estiver aberto |
-| `<Leader>ga` | Anota a linha sob o cursor (entrada de uma linha) |
-| `<Leader>gA` | Anota a linha sob o cursor (entrada de várias linhas) |
+| `<Leader>ga` | Anota a linha sob o cursor (entrada de uma linha); no modo visual, o trecho |
+| `<Leader>gA` | O mesmo, na entrada de várias linhas |
 | `<Leader>gv` | Marca como vista a entrada em que a revisão está e abre o diff da próxima não vista |
 
 As duas de anotação só valem dentro de um arquivo do repositório — não no
-painel, não num lado do diff, não num buffer sem arquivo atrás. Nos outros casos
-elas avisam em vez de anotar.
+painel, não num lado do diff que é uma versão, não num buffer sem arquivo atrás.
+Nos outros casos elas avisam em vez de anotar. No diff de unstaged o lado da
+direita é o próprio arquivo, e ali elas valem — por isso a winbar dele as
+escreve.
+
+Selecione linhas (`V`) e aperte `<Leader>ga`: a anotação fica presa ao trecho
+inteiro, a entrada diz `a.txt:2-4`, e o relatório cita todas as linhas dele. Um
+trecho de uma linha só é a anotação daquela linha.
+
+As duas teclas de anotar saem das opções do painel (`mappings.annotate_line` e
+`mappings.annotate_line_long`, em `lua/polish.lua`), e é o `setup` que as
+mapeia: por isso a winbar do diff escreve sempre a tecla que está valendo.
 
 ### Teclas do painel
 
@@ -147,7 +157,7 @@ Locais ao buffer do painel, e sempre sobre a linha onde o cursor está.
 | `<Space>` | Marca o arquivo como visto e leva à próxima não vista, sem dar a volta |
 | `a` | Anota o arquivo inteiro, sem linha (entrada de uma linha) |
 | `A` | Anota o arquivo inteiro na entrada de várias linhas |
-| `R` | Gera o relatório da revisão e põe os pontos anotados na quickfix |
+| `R` | Gera o relatório da revisão, copia para a área de transferência e põe os pontos anotados na quickfix |
 | `c` | Abre o grafo com os commits de todas as branches, ao lado do painel |
 | `C` | Abre o grafo na apresentação alternativa (gitgraph) |
 | `w` | Volta do modo commit para o working tree |
@@ -232,6 +242,15 @@ sai da tela.
 | `go` | Abre o arquivo no disco no ponto que está sendo lido |
 | `<C-o>` | (já no arquivo) traz o diff de volta, quando o pulo sairia dele |
 | `q` | Fecha o diff e volta ao painel |
+| `<Leader>ga` / `<Leader>gA` | Anota a linha, ou as linhas selecionadas (as teclas globais, só nomeadas aqui) |
+
+A winbar escreve `anotar  <Leader>ga <Leader>gA` no fim, e só quando o lado da
+direita é o arquivo do revisor — o diff de unstaged. No de staged os dois lados
+são versões (`HEAD` e índice), assim como as três de um conflito, e ali a
+anotação seria recusada: para anotar, `go` leva ao arquivo. As teclas de anotar
+não são do diff, e ele não as mapeia nem as tira ao sair: são as globais. O fim
+é o lugar delas porque uma winbar maior que a janela perde o meio e guarda o
+fim.
 
 As quatro andam pela lista sem voltar a ela: movem o cursor do painel, abrem o
 diff da entrada e deixam o foco no diff, que é onde o revisor está. A ordem é a
@@ -434,6 +453,12 @@ número faria a anotação apontar para o lugar errado depois de qualquer ediç�
 acima dela, e extmarks resolveriam isso só enquanto o buffer estivesse aberto —
 anotações precisam sobreviver a fechar o editor.
 
+A anotação de um trecho guarda a primeira e a última linha, e a âncora dela é o
+texto de todas. Ela é reancorada inteira: as linhas têm que estar juntas e na
+mesma ordem, e uma delas solta no arquivo não é o trecho. Se qualquer linha do
+trecho mudou, ele sai deslocado. O trecho é um ponto diferente da primeira linha
+dele — as duas anotações convivem.
+
 ### Entrada de várias linhas
 
 A janela que `A` e `<Leader>gA` abrem (as teclas estão escritas na borda dela).
@@ -476,6 +501,12 @@ quem apertar por hábito recebe a recusa que aponta a tecla de volta ao working
 tree. Um menu que oferece o que vai ser recusado é pior do que não ter menu.
 
 ### Depois de `R`
+
+O documento inteiro vai para a área de transferência (`+`) e para o registro
+sem nome (`"`): é só colar no PR, no ticket ou na mensagem. O arquivo `.md`
+também é gravado (veja [Onde as coisas são gravadas](#onde-as-coisas-são-gravadas)),
+e a notificação diz as duas coisas. Numa revisão sem anotação nada é copiado — o
+que estava na área de transferência continua lá.
 
 A quickfix fica com um ponto por anotação, na mesma ordem em que o relatório é
 lido, e é percorrida com as teclas do editor: `:cnext`, `:cprev`, `:copen`. A
@@ -598,10 +629,14 @@ atualização do ADR-0009.
    linha anota a linha. A contagem aparece na linha do painel (`M  a.txt  ✎ 2`).
    Anotar o mesmo ponto de novo abre a entrada já preenchida e edita a anotação
    que está lá; apagar o texto todo remove a anotação. `A` e `<Leader>gA` abrem
-   a entrada de várias linhas.
-10. **Relatório** — `R`. A notificação diz onde ele foi gravado; a quickfix abre
-   com os pontos, e o cursor fica no painel. Abra o `.md`: as anotações estão
-   agrupadas por arquivo, cada uma com a linha e o trecho de código citado.
+   a entrada de várias linhas. No arquivo, `V` e `2j` e `<Leader>ga`: a entrada
+   diz `:N-M`, e o modo visual já saiu. Com `<CR>` num arquivo unstaged, a
+   winbar do diff termina em `anotar  <Leader>ga <Leader>gA`; num staged, não.
+10. **Relatório** — `R`. A notificação diz que ele foi copiado e onde foi
+   gravado; a quickfix abre com os pontos, e o cursor fica no painel. Cole
+   (`<C-S-v>` no terminal, ou `p` no editor): é o `.md` inteiro, com as anotações
+   agrupadas por arquivo, cada uma com a linha e o trecho de código citado — o
+   trecho anotado sai como `**Linhas N–M**` com todas as linhas.
    `git status` no repositório revisado continua igual ao de antes.
 11. **Reancoragem** — anote a linha 2 de um arquivo, insira duas linhas acima
    dela, salve e gere o relatório de novo: a anotação sai na linha 4. Agora

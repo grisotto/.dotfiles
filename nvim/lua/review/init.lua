@@ -5,10 +5,52 @@
 ---pública do plugin.
 local M = {}
 
----Override the panel's options. Optional: the defaults apply without it.
+---The global keys `setup` mapped, by mode, with the function each one runs —
+---which is what tells a key still ours from one somebody else has put on the
+---same lhs since.
+---@type { mode: string, run: fun() }[]
+local global_keys = {}
+
+---Map the keys that annotate, in every buffer: in normal mode on the line of the
+---cursor, in visual mode on the run of lines selected.
+---
+---From the options, and at the moment they are set: the winbar of the diff
+---writes these same keys, and a mapping read from anywhere before the options
+---are is a second copy of the key, which disagrees the first time the reviewer
+---changes it. The keys a previous `setup` mapped go first, so changing one moves
+---it instead of leaving the old one behind.
+---@param mappings ReviewMappings
+local function map_global_keys(mappings)
+  for _, key in ipairs(global_keys) do
+    for _, map in ipairs(vim.api.nvim_get_keymap(key.mode)) do
+      if map.callback == key.run then pcall(vim.keymap.del, key.mode, map.lhs) end
+    end
+  end
+  global_keys = {}
+
+  local function annotate() M.annotate() end
+  local function annotate_long() M.annotate { long = true } end
+  for _, key in ipairs {
+    { mode = "n", lhs = mappings.annotate_line, run = annotate, desc = "Anotar a linha" },
+    { mode = "n", lhs = mappings.annotate_line_long, run = annotate_long, desc = "Anotar a linha em várias linhas" },
+    { mode = "x", lhs = mappings.annotate_line, run = annotate, desc = "Anotar o trecho" },
+    { mode = "x", lhs = mappings.annotate_line_long, run = annotate_long, desc = "Anotar o trecho em várias linhas" },
+  } do
+    vim.keymap.set(key.mode, key.lhs, key.run, { desc = key.desc })
+    global_keys[#global_keys + 1] = { mode = key.mode, run = key.run }
+  end
+end
+
+---Override the panel's options, and map from them the global keys that
+---annotate. The panel opens without it, with the defaults; the keys that
+---annotate from inside a file are only there once it has run.
 ---@param opts table|nil see `ReviewConfig`
 ---@return ReviewConfig
-function M.setup(opts) return require("review.config").setup(opts) end
+function M.setup(opts)
+  local options = require("review.config").setup(opts)
+  map_global_keys(options.mappings)
+  return options
+end
 
 ---Open the panel on the repository containing the current directory.
 function M.open() require("review.panel").open() end
@@ -44,8 +86,9 @@ function M.range(oldest, newest) require("review.panel").range(oldest, newest) e
 ---Go back to reviewing the working tree.
 function M.worktree() require("review.panel").worktree() end
 
----Write the annotation of the line the cursor is on, in the file being read.
----A line that already has one is edited, instead of gaining a second remark.
+---Write the annotation of the line the cursor is on, in the file being read —
+---or, called from a key pressed in visual mode, of the lines selected. A point
+---that already has one is edited, instead of gaining a second remark.
 ---@param opts { long: boolean|nil }|nil `long = true` opens the entry of
 ---several lines, for an observation that does not fit in a sentence
 function M.annotate(opts)
@@ -66,10 +109,10 @@ end
 function M.seen_and_next() require("review.panel").seen_and_next() end
 
 ---Generate the report of the review under way: a markdown document with the
----annotations grouped by file, written outside the repository, and the same
----points in the quickfix. Of the repository the panel of this tabpage is
----listing, or of the one containing the current directory when there is no
----panel here.
+---annotations grouped by file, written outside the repository and put in the
+---clipboard, and the same points in the quickfix. Of the repository the panel
+---of this tabpage is listing, or of the one containing the current directory
+---when there is no panel here.
 function M.report()
   local panel = require "review.panel"
   require("review.actions").report(panel.repository(), panel.mode())

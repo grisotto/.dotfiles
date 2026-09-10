@@ -20,6 +20,12 @@
 -- estão `gg`, `gb`, `gc`, `gC`, `gt`, `gT`, `go` e o grupo `gn` do neogit, mais
 -- os locais do gitsigns (`gl`, `gL`, `gp`, `gr`, `gR`, `gs`, `gS`, `gd`).
 --
+-- As duas de anotar (`<Leader>ga` e `<Leader>gA`, no modo normal e no visual)
+-- não estão aqui: quem as mapeia é o `setup` do plugin, chamado em
+-- `lua/polish.lua`, a partir das opções (`mappings.annotate_line` e
+-- `mappings.annotate_line_long`). A winbar do diff escreve essas mesmas teclas,
+-- e as duas saírem das opções no mesmo momento é o que as impede de divergir.
+--
 -- As opções do painel ficam em `lua/polish.lua`.
 
 ---@type LazySpec
@@ -30,14 +36,6 @@ return {
     mappings = {
       n = {
         ["<Leader>r"] = { function() require("review").toggle() end, desc = "Painel de revisão" },
-        -- A tecla simples é a anotação de uma frase, que é quase toda anotação
-        -- de revisão; a shifted abre a entrada de várias linhas. O mesmo par
-        -- que o painel tem em `a` e `A` para a anotação de arquivo.
-        ["<Leader>ga"] = { function() require("review").annotate() end, desc = "Anotar a linha" },
-        ["<Leader>gA"] = {
-          function() require("review").annotate { long = true } end,
-          desc = "Anotar a linha em várias linhas",
-        },
         -- O `<Space>` do painel, de dentro do arquivo que está sendo lido: `v`
         -- é a letra do visto, como no painel, e não pode ser a tecla solta aqui
         -- — dentro de um arquivo ela é o modo visual.

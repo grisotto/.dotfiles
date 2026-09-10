@@ -28,6 +28,8 @@ acceptance:
   done: true
 - title: Anotação cuja âncora não é encontrada sai marcada como deslocada, em seção própria
   done: true
+- title: O mesmo atalho põe o documento na área de transferência e no registrador sem nome, sem tocar neles numa revisão sem anotação
+  done: true
 deps:
 - nvi-01m1d6hwxd9p
 ---

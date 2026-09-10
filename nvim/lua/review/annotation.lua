@@ -1,10 +1,11 @@
 ---What the reviewer writes about a point of the code.
 ---
 ---An annotation is tied to a file and, when it was written from the code
----itself, to a line of it. Along with the text it records the anchor — the
----text of that line at the moment it was written (ADR-0003). The anchor is
----only recorded here; whoever uses it to find the line again after the file
----changed is the review report.
+---itself, to a line of it — or to a run of lines, when the key was pressed on a
+---selection. Along with the text it records the anchor — the text of those
+---lines at the moment it was written (ADR-0003). The anchor is only recorded
+---here; whoever uses it to find the lines again after the file changed is the
+---review report.
 ---
 ---Writing where something is already written edits it, rather than piling a
 ---second observation on the same point: two remarks about one line are one
@@ -25,8 +26,9 @@ local M = {}
 ---@field root string absolute path of the repository root
 ---@field path string the file, from the repository root
 ---@field mode string the mode of the review it is being written in
----@field line integer|nil the line; absent on a file annotation
----@field anchor string|nil the text of that line; absent on a file annotation
+---@field line integer|nil the line, the first of a run of them; absent on a file annotation
+---@field end_line integer|nil the last line of a run; absent on a point of one line
+---@field anchor string|nil the text of those lines, one per line; absent on a file annotation
 
 ---The whole file, without a line: what a line of the panel points at is a
 ---file, and the remark written from there is about all of it.
@@ -36,11 +38,37 @@ local M = {}
 ---@return ReviewPoint
 function M.point_of_file(repository, path, mode) return { root = repository, path = path, mode = mode.key } end
 
+---The `end_line` a point from `first` to `last` is written with: none on a point
+---of one line, which is that line alone and not a run of one.
+---@param first integer
+---@param last integer
+---@return integer|nil
+function M.end_line(first, last) return last > first and last or nil end
+
+---The lines the key was pressed on: the ones a visual selection holds, when it
+---was pressed on one, and the line of the cursor otherwise.
+---
+---Out of the selection before anything is asked: what comes next is an entry
+---in a prompt or a window of its own, and a visual mode left running under it
+---is not something to hand the reviewer back. The "x" is what makes the editor
+---leave it now instead of after this returns.
+---@return integer first
+---@return integer last
+local function pointed_lines()
+  local cursor = vim.api.nvim_win_get_cursor(0)[1]
+  if not vim.fn.mode():find "^[vV\22]" then return cursor, cursor end
+
+  local other = vim.fn.line "v"
+  vim.api.nvim_feedkeys(vim.keycode "<Esc>", "nx", false)
+  return math.min(other, cursor), math.max(other, cursor)
+end
+
 ---The point the reviewer is on in the file they are reading: the line the
----cursor is on, in the repository that file belongs to.
+---cursor is on, or the lines selected, in the repository that file belongs to.
 ---@param mode ReviewMode the review it is being written in
 ---@return ReviewPoint|nil nil when this buffer is not a file of a repository
 function M.point_under_cursor(mode)
+  local first, last = pointed_lines()
   local bufnr = vim.api.nvim_get_current_buf()
   -- Everything the panel puts on screen that is not the file itself — the
   -- panel, a side of the diff, the long entry — is a buffer with nothing on
@@ -60,10 +88,13 @@ function M.point_under_cursor(mode)
     root = repository,
     path = path,
     mode = mode.key,
-    line = vim.api.nvim_win_get_cursor(0)[1],
-    -- The anchor is the line as it stands right now, which is what the remark
+    line = first,
+    -- A selection of one line is that line: the same point the key pressed
+    -- without a selection writes, and so the same remark.
+    end_line = M.end_line(first, last),
+    -- The anchor is the lines as they stand right now, which is what the remark
     -- being written is about (ADR-0003).
-    anchor = vim.api.nvim_get_current_line(),
+    anchor = table.concat(vim.api.nvim_buf_get_lines(bufnr, first - 1, last, false), "\n"),
   }
 end
 
@@ -95,6 +126,7 @@ end
 ---@param point ReviewPoint
 ---@return string
 local function about(point)
+  if point.end_line then return ("Anotação em %s:%d-%d"):format(point.path, point.line, point.end_line) end
   if point.line then return ("Anotação em %s:%d"):format(point.path, point.line) end
   return ("Anotação em %s"):format(point.path)
 end

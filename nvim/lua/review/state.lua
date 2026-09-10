@@ -45,8 +45,11 @@ end
 ---@class ReviewAnnotation what the reviewer wrote about one point of the code
 ---@field path string the file it is about, from the repository root
 ---@field mode string the mode of the review it was written in
----@field line integer|nil the line it is tied to; absent on a file annotation
----@field anchor string|nil the text of that line when it was written (ADR-0003)
+---@field line integer|nil the line it is tied to, the first of a run of them;
+---absent on a file annotation
+---@field end_line integer|nil the last line of a run; absent on a line alone
+---@field anchor string|nil the text of those lines when it was written, one per
+---line (ADR-0003)
 ---@field text string what the reviewer wrote
 ---@field at string when it was written, in UTC
 
@@ -118,13 +121,18 @@ function M.toggle(root, content, path)
 end
 
 ---Whether an annotation is the one written at `point`: the same file, in the
----same mode, on the same line — where no line at all is the file annotation,
----of which there is one per file and mode.
+---same mode, on the same lines — where no line at all is the file annotation,
+---of which there is one per file and mode. A run of lines is another point than
+---its first line alone: the remark about a passage is not the remark about one
+---line of it.
 ---@param annotation ReviewAnnotation
 ---@param point ReviewPoint
 ---@return boolean
 local function is_at(annotation, point)
-  return annotation.path == point.path and annotation.mode == point.mode and annotation.line == point.line
+  return annotation.path == point.path
+    and annotation.mode == point.mode
+    and annotation.line == point.line
+    and annotation.end_line == point.end_line
 end
 
 ---Every annotation of a repository, in the order they were written.
@@ -167,6 +175,7 @@ function M.annotate(point, text)
       path = point.path,
       mode = point.mode,
       line = point.line,
+      end_line = point.end_line,
       anchor = point.anchor,
       text = text,
       at = os.date "!%Y-%m-%dT%H:%M:%SZ",

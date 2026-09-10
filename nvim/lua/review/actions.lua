@@ -294,7 +294,19 @@ function M.annotate_line(mode, opts, done)
   annotation.write(point, opts, done)
 end
 
----Generate the review report and fill the quickfix with the same points.
+---Put something where the reviewer can paste it: in the system clipboard,
+---which is where copying points — a PR, a ticket, a message — and in the
+---unnamed register, so it is also there for a `p` in the editor, clipboard
+---provider or not.
+---@param value string|string[] a list goes in line by line
+local function to_clipboard(value)
+  local regtype = type(value) == "table" and "l" or "v"
+  vim.fn.setreg("+", value, regtype)
+  vim.fn.setreg('"', value, regtype)
+end
+
+---Generate the review report, put it in the clipboard, and fill the quickfix
+---with the same points.
 ---
 ---This one is not about a line of the panel: it is about the review as a
 ---whole, which is why it takes the repository and not a target. Without a
@@ -302,8 +314,11 @@ end
 ---function is not — it is the repository of the current directory, the same
 ---one the panel would open on.
 ---
----What was written is said out loud: the document is outside the repository
----(ADR-0004), so the path is the only way the reviewer knows where to find it.
+---The document is made to leave the editor, and the clipboard is the shortest
+---way out of it: the reviewer presses the key and pastes. The file stays,
+---because it is what is left when the clipboard has moved on. Where it was
+---written is said out loud: it is outside the repository (ADR-0004), so the
+---path is the only way the reviewer knows where to find it.
 ---@param repository string|nil absolute path of the repository root
 ---@param mode ReviewMode the review to report, which is the panel's
 function M.report(repository, mode)
@@ -313,12 +328,20 @@ function M.report(repository, mode)
     return
   end
 
-  local path, count = report.generate(repository, mode)
-  if count == 0 then
+  local path, count, document = report.generate(repository, mode)
+  -- Nothing is copied from an empty review: what the reviewer had in the
+  -- clipboard is worth more than a report that says nothing.
+  if not document then
     vim.notify "review: nenhuma anotação nesta revisão para relatar."
-  elseif path then
-    vim.notify(("review: %d %s em %s"):format(count, count == 1 and "anotação" or "anotações", path))
+    return
   end
+
+  -- Copied even when the file could not be written, which the generation has
+  -- already warned about: the document was built all the same, and pasting it
+  -- is what it is for.
+  to_clipboard(document)
+  local copied = ("review: relatório com %d %s copiado"):format(count, count == 1 and "anotação" or "anotações")
+  vim.notify(path and ("%s; gravado em %s"):format(copied, path) or copied)
 end
 
 ---Say it when git refused. Everything here changes the repository, and a
@@ -511,16 +534,12 @@ function M.open_file_at(target, at)
   end
 end
 
----Put a path where the reviewer can paste it: in the system clipboard, which
----is where copying points — a PR, a ticket, a message — and in the unnamed
----register, so it is also there for a `p` in the editor, clipboard provider or
----not. The notification shows what went into them: the two keys differ only in
----the path they copy, and reading it back is the only way to tell the key that
----was pressed from the one that was meant.
+---Put a path where the reviewer can paste it. The notification shows what went
+---there: the two keys differ only in the path they copy, and reading it back is
+---the only way to tell the key that was pressed from the one that was meant.
 ---@param path string
 local function copy(path)
-  vim.fn.setreg("+", path)
-  vim.fn.setreg('"', path)
+  to_clipboard(path)
   vim.notify("review: copiado " .. path)
 end
 

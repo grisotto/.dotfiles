@@ -36,6 +36,8 @@ local M = {}
 ---@field back_to_diff string key that brings the diff back from the file it was left for
 ---@field annotate string key that writes the annotation of the file on the line
 ---@field annotate_long string key that writes it in the entry of several lines
+---@field annotate_line string global key that writes the annotation of the line being read, or of the lines selected
+---@field annotate_line_long string global key that writes it in the entry of several lines
 ---@field report string key that generates the report of the review under way
 ---@field graph string key that opens the graph of commits, to review one of them
 ---@field graph_alternate string key that opens the graph the other way
@@ -158,6 +160,13 @@ local defaults = {
     -- one opens the entry of several lines for when it is not.
     annotate = "a",
     annotate_long = "A",
+    -- The same pair from inside the file being read, where `a` is the editor's
+    -- own append and so the pair goes behind the Leader. Unlike every other key
+    -- here these are global: `setup` maps them from these values, in normal
+    -- mode for the line and in visual mode for the run of lines selected, and
+    -- the winbar of the diff writes them from the same values.
+    annotate_line = "<Leader>ga",
+    annotate_line_long = "<Leader>gA",
     -- "R" for "relatório", beside the "r" that refreshes: the two are the
     -- panel's own keys, about the review and not about a line of it.
     report = "R",

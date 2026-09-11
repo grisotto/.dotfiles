@@ -37,6 +37,29 @@ function M.annotations()
   return read().annotations or {}
 end
 
+---The deliveries of the repository under review, in the order they were made:
+---each with its id, mode, instant, header and the items as they were handed
+---to the agent. None at all when nothing was ever delivered.
+---@return table[]
+function M.deliveries()
+  if not M.exists() then return {} end
+  return read().deliveries or {}
+end
+
+---@return integer the schema version the document was written with
+function M.version() return read().version end
+
+---Take a top-level field out of the document by hand, as a document written
+---before that field existed would have been.
+---@param field string
+function M.without(field)
+  local documents = written()
+  assert(#documents == 1, ("expected one review document, found %d"):format(#documents))
+  local content = read()
+  content[field] = nil
+  assert(vim.fn.writefile({ vim.json.encode(content) }, documents[1]) == 0, "could not write the review document")
+end
+
 ---Put an annotation into the document by hand, as a review of another mode
 ---would have left it there.
 ---

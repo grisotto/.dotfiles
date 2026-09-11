@@ -71,7 +71,7 @@ acionada, e as afirmações feitas sobre cinco coisas apenas:
    e `input.answer` para responder), e a entrada longa, lida da janela que ela
    abre (`entry.lines`, `entry.title`), como o painel é lido;
 9. o documento de estado da revisão, lido de volta de onde foi gravado
-   (`document.annotations`);
+   (`document.annotations`, `document.deliveries`, `document.version`);
 10. o relatório de revisão, lido de volta de onde foi gravado, em qualquer um dos
     dois formatos (`report.header`, `report.instructions`, `report.items`), que é
     o documento com que o revisor sai do editor;
@@ -418,7 +418,11 @@ de onde o revisor começa a lê-lo.
 `after_each`, como a UI de seleção e a de entrada. Ela existe para as teclas em
 que a mensagem é a resposta inteira — a ponta do arquivo, em `]c` e `[c`, e o que
 impede a revisão de andar quando não é o fim da lista —, e não para conferir o
-texto de toda mensagem do painel.
+texto de toda mensagem do painel. No relatório ela lê as duas respostas do `R`
+que não se distinguem pelo resto da tela: a entrega refeita, que copia um
+documento igual ao que já estava lá, e o modo sem nada a relatar, em que a área
+de transferência fica como estava — sem a mensagem, o teste não separaria a
+tecla que não fez nada de propósito da que falhou calada.
 
 `tests/helpers/clipboard.lua` é a área de transferência do editor de teste:
 `clipboard.content()` devolve o que foi copiado e `clipboard.clear()` a esvazia.
@@ -490,6 +494,18 @@ quando o arquivo de hoje, aberto com `go`, recusa a anotação (décimo quarto).
 commit gravada antes de haver versão, escrita no arquivo de hoje, é plantada no
 documento (`document.plant`).
 
+Gerar o relatório é entregar (`nvi-01m2723xn2ga`) não trouxe item novo. O que se
+afirma é o relatório da segunda geração (décimo): só o que foi anotado depois da
+entrega, ou, sem nenhuma anotação aberta, a última entrega idêntica texto a
+texto, mesmo com o disco, o modelo do preâmbulo e a instrução do tipo mudados. E
+também a quickfix procurada de novo no disco (décimo primeiro), a área de
+transferência (quinto), a contagem na linha do painel (primeiro), a entrada vazia
+no ponto entregue (oitavo), a notificação que diz que a entrega é refeita (décimo
+quarto) e as entregas guardadas no documento de estado com a entrega de cada
+anotação (nono). O documento de antes das entregas é o de hoje sem o campo delas
+(`document.without "deliveries"`): o que se afirma sobre ele é que a versão não
+subiu e que o visto sobreviveu, lido do painel reaberto.
+
 `tests/helpers/screen.lua` lê a tela do editor de teste como o revisor a vê,
 com flutuantes, bordas, winbars e statuslines: `screen.lines()` devolve todas as
 linhas da tela, e `screen.window(win)` só o retângulo que uma janela cobre — com
@@ -546,7 +562,10 @@ diretório de dados do editor: `document.annotations()` devolve as anotações e
 `document.exists()` diz se a revisão gravou alguma coisa. Ele acha o documento
 varrendo o diretório, sem reconstruir o nome que o módulo de estado dá a ele.
 `document.plant()` põe nele uma anotação à mão, que é como um teste tem uma
-anotação de outro modo — o editor ainda não escreve nenhuma.
+anotação de outro modo — o editor ainda não escreve nenhuma. `document.deliveries()`
+devolve as entregas, `document.version()` a versão do esquema com que ele foi
+gravado, e `document.without` tira dele um campo de cima, como estaria um
+documento gravado antes de o campo existir.
 
 `tests/helpers/report.lua` lê de volta o relatório gravado, em qualquer um dos
 dois formatos — `"xml"`, o do `R`, e `"markdown"`, o do `M` —, e devolve o mesmo

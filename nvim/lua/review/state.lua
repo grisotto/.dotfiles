@@ -29,6 +29,10 @@ local M = {}
 ---The version of the line an annotation was read in went in the same way: a
 ---line written before it has none, and in the working tree reads as the file on
 ---disk, which was the only place a line could be annotated then.
+---
+---And so did the deliveries: a document written before them has none, and every
+---annotation in it is open — nothing had been handed to an agent as a delivery
+---yet, so the next report takes them all, which is what it took then.
 local VERSION = 1
 
 ---@return string directory the documents live in
@@ -64,14 +68,30 @@ end
 ---one written before annotations had a type, which counts as `issue`
 ---@field text string what the reviewer wrote
 ---@field at string when it was written, in UTC
+---@field delivery integer|nil the id of the delivery it went out in; absent on
+---an open one (ADR-0012)
+
+---@class ReviewDelivery: ReviewReport the open annotations of a mode that went
+---out together in a report, frozen as the agent got them: the header, the
+---items with the lines and the code of that moment, and what the preamble was
+---written from
+---@field id integer
+---@field mode string the mode it is of
+---@field at string when it was made, in UTC
 
 ---@class ReviewDocument
 ---@field version integer
 ---@field seen table<string, ReviewMark> indexed by content key
 ---@field annotations ReviewAnnotation[] in the order they were written
+---@field deliveries ReviewDelivery[] in the order they were made
 
 ---@return ReviewDocument
-local function empty() return { version = VERSION, seen = {}, annotations = {} } end
+local function empty() return { version = VERSION, seen = {}, annotations = {}, deliveries = {} } end
+
+---@return string now, in UTC
+local function now()
+  return os.date "!%Y-%m-%dT%H:%M:%SZ" --[[@as string]]
+end
 
 ---@param root string
 ---@return ReviewDocument
@@ -83,6 +103,7 @@ local function load(root)
   if not ok or type(document) ~= "table" or document.version ~= VERSION then return empty() end
   if type(document.seen) ~= "table" then document.seen = {} end
   if type(document.annotations) ~= "table" then document.annotations = {} end
+  if type(document.deliveries) ~= "table" then document.deliveries = {} end
   return document
 end
 
@@ -124,7 +145,7 @@ function M.toggle(root, content, path)
   if document.seen[content] then
     document.seen[content] = nil
   else
-    document.seen[content] = { path = path, at = os.date "!%Y-%m-%dT%H:%M:%SZ" }
+    document.seen[content] = { path = path, at = now() }
   end
 
   local seen = document.seen[content] ~= nil
@@ -143,29 +164,96 @@ local function version_of(annotation)
   if annotation.mode == WORKTREE.key then return "disk" end
 end
 
----Whether an annotation is the one written at `point`: the same file, in the
----same mode, read in the same version, on the same lines — where no line at all
----is the file annotation, of which there is one per file and mode. Line 5 of the
----index is another point than line 5 of the disk, because they are different
----lines. A run of lines is another point than its first line alone: the remark
----about a passage is not the remark about one line of it.
+---Whether an annotation is still open: not out in any report yet (ADR-0012).
+---@param annotation ReviewAnnotation
+---@return boolean
+local function is_open(annotation) return annotation.delivery == nil end
+
+---Whether an annotation is the open one written at `point`: the same file, in
+---the same mode, read in the same version, on the same lines — where no line at
+---all is the file annotation, of which there is one open per file and mode. Line
+---5 of the index is another point than line 5 of the disk, because they are
+---different lines. A run of lines is another point than its first line alone:
+---the remark about a passage is not the remark about one line of it.
+---
+---A delivered one is not there anymore, as far as writing goes: after it went
+---out the agent changed the code, and what is written on the same point is
+---another request, not the correction of the one delivered.
 ---@param annotation ReviewAnnotation
 ---@param point ReviewPoint
 ---@return boolean
 local function is_at(annotation, point)
-  return annotation.path == point.path
+  return is_open(annotation)
+    and annotation.path == point.path
     and annotation.mode == point.mode
     and version_of(annotation) == version_of(point)
     and annotation.line == point.line
     and annotation.end_line == point.end_line
 end
 
----Every annotation of a repository, in the order they were written.
----@param root string absolute path of the repository root
+---The open annotations of one review among `annotations`: the ones written in
+---that mode and not delivered yet, in the order they were written. The remarks
+---of another mode belong to another review, and the delivered ones were already
+---handed over.
+---@param annotations ReviewAnnotation[]
+---@param mode string the mode of the review
 ---@return ReviewAnnotation[]
-function M.annotations(root) return load(root).annotations end
+local function open_in(annotations, mode)
+  return vim.tbl_filter(function(annotation) return annotation.mode == mode and is_open(annotation) end, annotations)
+end
 
----The annotation already written at a point, if there is one.
+---The open annotations of one review.
+---@param root string absolute path of the repository root
+---@param mode string the mode of the review
+---@return ReviewAnnotation[]
+function M.open_annotations(root, mode) return open_in(load(root).annotations, mode) end
+
+---Deliver the open annotations of a mode: freeze what the report of them says,
+---keep it as a delivery, and mark each of them with it — in one write, so the
+---annotations delivered are exactly the ones the report was built from.
+---
+---The report is built by `build` from the annotations, and kept whole: the
+---lines and the code of this moment, and what the preamble was written from.
+---Redoing the delivery is rendering it again, and it has to be what the agent
+---got however the file, the template or the configuration moved on since.
+---@param root string absolute path of the repository root
+---@param mode string the mode of the review
+---@param build fun(open: ReviewAnnotation[]): ReviewReport
+---@return ReviewDelivery|nil nil when there is no open annotation in the mode,
+---which is nothing to deliver
+function M.deliver(root, mode, build)
+  local document = load(root)
+  local open = open_in(document.annotations, mode)
+  if #open == 0 then return nil end
+
+  -- Past every id there is, and not the count of them: an id is what an
+  -- annotation points at, and two deliveries must never share one.
+  local id = 1
+  for _, earlier in ipairs(document.deliveries) do
+    id = math.max(id, earlier.id + 1)
+  end
+
+  local delivery = vim.tbl_extend("error", build(open), { id = id, mode = mode, at = now() })
+  for _, annotation in ipairs(open) do
+    annotation.delivery = id
+  end
+  document.deliveries[#document.deliveries + 1] = delivery
+  save(root, document)
+  return delivery
+end
+
+---The last delivery of a mode, if there is one.
+---@param root string absolute path of the repository root
+---@param mode string the mode of the review
+---@return ReviewDelivery|nil
+function M.last_delivery(root, mode)
+  local deliveries = load(root).deliveries
+  for index = #deliveries, 1, -1 do
+    if deliveries[index].mode == mode then return deliveries[index] end
+  end
+end
+
+---The open annotation already written at a point, if there is one.
 ---@param point ReviewPoint
 ---@return ReviewAnnotation|nil
 function M.annotation_at(point)
@@ -174,9 +262,9 @@ function M.annotation_at(point)
   end
 end
 
----Write the annotation of a point, replacing whatever was there: the same
----point annotated twice is one observation revised, not two piled on the same
----place.
+---Write the annotation of a point, replacing the open one that was there: the
+---same point annotated twice is one observation revised, not two piled on the
+---same place. A delivered one stays as it is, beside the new one.
 ---
 ---Empty text removes it. The entry comes prefilled with what is already
 ---written, so clearing it is how the reviewer takes an observation back — and
@@ -206,7 +294,7 @@ function M.annotate(point, text, kind)
       anchor = point.anchor,
       type = kind,
       text = text,
-      at = os.date "!%Y-%m-%dT%H:%M:%SZ",
+      at = now(),
     }
   end
 

@@ -167,24 +167,15 @@ function M.point_under_cursor(mode)
   return point_on_lines(repository, path, mode, "disk", bufnr, first, last)
 end
 
----The annotations of one review: the ones written in that mode, in the order
----they were written. The remarks of another mode belong to another review, and
----neither the panel's counts nor the report are about them.
----@param repository string absolute path of the repository root
----@param mode ReviewMode
----@return ReviewAnnotation[]
-function M.of_mode(repository, mode)
-  return vim.tbl_filter(function(written) return written.mode == mode.key end, state.annotations(repository))
-end
-
----How many annotations each file of the repository has in this mode, by path,
----so the panel can put the count on the file's line.
+---How many open annotations each file of the repository has in this mode, by
+---path, so the panel can put the count on the file's line. Only the open ones:
+---the count is what is still to be handed to the agent (ADR-0012).
 ---@param repository string absolute path of the repository root
 ---@param mode ReviewMode
 ---@return table<string, integer>
 function M.counts(repository, mode)
   local counts = {}
-  for _, written in ipairs(M.of_mode(repository, mode)) do
+  for _, written in ipairs(state.open_annotations(repository, mode.key)) do
     counts[written.path] = (counts[written.path] or 0) + 1
   end
   return counts

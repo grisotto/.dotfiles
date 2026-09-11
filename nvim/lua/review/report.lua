@@ -14,10 +14,15 @@
 ---other: building the items reads the repository and the state, rendering
 ---them in a format reads neither, and generating writes what was rendered.
 ---
----It holds the annotations of the current mode alone: the document is about
----the review happening now, not about every remark ever written on this
----repository. And it is written outside the repository being reviewed
+---It is about the current mode alone: the document is about the review
+---happening now, not about every remark ever written on this repository. And it is written outside the repository being reviewed
 ---(ADR-0004), where the reviewer's own list of untracked files cannot see it.
+---
+---Generating it is delivering them (ADR-0012): the report is frozen in the
+---state document as a delivery, and the annotations in it stop being open, so
+---the next report takes only what was written after. With nothing open, the
+---last delivery of the mode is rendered again — from what was frozen, which is
+---what the agent got, and not from the file as it is now.
 ---
 ---Where each annotation stands is decided here, and only here. The line
 ---recorded with it is where it was when it was written, and the file has moved
@@ -41,6 +46,7 @@
 local annotation = require "review.annotation"
 local config = require "review.config"
 local git = require "review.git"
+local state = require "review.state"
 
 local M = {}
 
@@ -70,6 +76,8 @@ local M = {}
 ---@class ReviewReport everything a format renders, and nothing it has to look up
 ---@field header ReviewReportHeader
 ---@field items ReviewReportItem[]
+---@field types ReviewAnnotationType[] the types the items use, with the
+---instruction each had, in the order of the types
 ---@field template string the template of its preamble, with the markers still in it
 
 ---@class ReviewPlacement one annotation, where it stands: in the file as it is
@@ -313,17 +321,32 @@ local function read_preamble_template()
   return PREAMBLE
 end
 
----Build the report of a review: the items, placed in the file as it is now, the
----header, and the template of the preamble — read here, with everything else a
----format renders, so rendering reads nothing but the report. Nil when the
----review has no annotation, which is no report.
+---The types the items use, with the instruction each has in the configuration
+---now, in the order of the types: what the preamble explains.
+---@param items ReviewReportItem[]
+---@return ReviewAnnotationType[]
+local function types_used(items)
+  local used = {}
+  for _, item in ipairs(items) do
+    used[item.type] = true
+  end
+  return vim.tbl_filter(function(kind) return used[kind.name] end, annotation.types())
+end
+
+---Build the report of the open annotations of a review: the items, placed in
+---the file as it is now, the header, the types the items use and the template
+---of the preamble — read here, with everything else a format renders, so
+---rendering reads nothing but the report. Which is also what makes a delivery
+---redone the report the agent got: the configuration and the template read
+---then are frozen with it.
 ---@param repository string absolute path of the repository root
 ---@param mode ReviewMode
----@return ReviewReport|nil
-local function build(repository, mode)
-  local placements = place(repository, mode, annotation.of_mode(repository, mode))
-  if #placements == 0 then return nil end
+---@param open ReviewAnnotation[] the annotations to deliver
+---@return ReviewReport
+local function build(repository, mode, open)
+  local placements = place(repository, mode, open)
   table.sort(placements, reads_before)
+  local items = items_of(placements)
 
   return {
     header = {
@@ -332,24 +355,10 @@ local function build(repository, mode)
       reference = reference_of(repository, mode),
       commit = mode.rev,
     },
-    items = items_of(placements),
+    items = items,
+    types = types_used(items),
     template = read_preamble_template(),
   }
-end
-
----@param items ReviewReportItem[]
----@return string the instruction of each type used, one per line, in the
----order of the types
-local function types_used(items)
-  local used = {}
-  for _, item in ipairs(items) do
-    used[item.type] = true
-  end
-  local lines = {}
-  for _, kind in ipairs(annotation.types()) do
-    if used[kind.name] then lines[#lines + 1] = ("- `%s`: %s"):format(kind.name, kind.instruction) end
-  end
-  return table.concat(lines, "\n")
 end
 
 ---The rule of the items not found, said only when there is one: a rule that
@@ -389,7 +398,10 @@ end
 ---@return string[]
 local function preamble(report)
   local values = {
-    types = types_used(report.items),
+    types = table.concat(
+      vim.tbl_map(function(kind) return ("- `%s`: %s"):format(kind.name, kind.instruction) end, report.types),
+      "\n"
+    ),
     reference = reference_rule(report.header),
     not_found = not_found_rule(report.items),
   }
@@ -611,14 +623,19 @@ local function report_path(repository, mode, format)
   return ("%s/%s-%s.%s"):format(directory(), name, mode, EXTENSIONS[format])
 end
 
----Generate the report of the review under way in a format: write the document,
----and fill the quickfix with the same points.
+---Generate the report of the review under way in a format: deliver the open
+---annotations of the mode — or, with none open, redo the last delivery of it —,
+---write the document, and fill the quickfix with the same points.
 ---
----Nothing is written when there is no annotation in this mode: a report of an
----empty review says nothing. What an earlier generation left goes with it, in
----both formats — the documents and the list are this review as it stands, and
----one still holding a remark the reviewer took back would be saying what the
----review no longer says, in the file they hand to the agent.
+---Delivered before the file is written: the document is built all the same
+---when writing fails, and it still goes to the clipboard, which is how it
+---reaches the agent.
+---
+---Nothing is written when the mode has nothing open and nothing delivered: a
+---report of an empty review says nothing. What an earlier generation left goes
+---with it, in both formats — the documents and the list are this review as it
+---stands, and one still holding a delivery that is gone would be saying what
+---the review no longer says, in the file they hand to the agent.
 ---@param repository string absolute path of the repository root
 ---@param mode ReviewMode the review to report
 ---@param format ReviewReportFormat
@@ -627,26 +644,35 @@ end
 ---@return integer count of annotations in it
 ---@return string[]|nil lines of the document, written or not — it is built
 ---before the file is; nil when there was nothing to write
+---@return boolean redone whether it is the last delivery made again, and not a
+---new one
 function M.generate(repository, mode, format)
-  local report = build(repository, mode)
-  if not report then
+  local delivery = state.deliver(repository, mode.key, function(open) return build(repository, mode, open) end)
+  local redone = false
+  if not delivery then
+    delivery = state.last_delivery(repository, mode.key)
+    redone = delivery ~= nil
+  end
+  if not delivery then
     for other in pairs(EXTENSIONS) do
       vim.fn.delete(report_path(repository, mode.key, other))
     end
     vim.fn.setqflist({}, " ", { title = QUICKFIX_TITLE, items = {} })
-    return nil, 0, nil
+    return nil, 0, nil, false
   end
 
   local path = report_path(repository, mode.key, format)
-  local lines = render(report, format)
+  local lines = render(delivery, format)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
   if vim.fn.writefile(lines, path) ~= 0 then
     vim.notify("review: não foi possível gravar o relatório em " .. path, vim.log.levels.WARN)
-    return nil, #report.items, lines
+    return nil, #delivery.items, lines, redone
   end
 
-  fill_quickfix(repository, report.items)
-  return path, #report.items, lines
+  -- Looked for on disk now, a redone delivery included: the report is what the
+  -- agent got, and the list is the reviewer's way through today's file.
+  fill_quickfix(repository, delivery.items)
+  return path, #delivery.items, lines, redone
 end
 
 return M

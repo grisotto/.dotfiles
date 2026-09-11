@@ -1180,13 +1180,13 @@ local function panel_actions()
       -- Not `on_entry`: the report is about the review, not about the line the
       -- cursor happens to be on, and it is generated from the header of the
       -- panel as much as from a file in it.
-      run = function() actions.report(M.repository(), M.mode(), "xml") end,
+      run = function() actions.report(M.repository(), M.mode(), "xml", M.refresh) end,
     },
     {
       key = mappings.report_markdown,
       label = "Gerar o relatório em markdown",
       desc = "Gerar o relatório da revisão em markdown, copiá-lo para a área de transferência e pôr os pontos na quickfix",
-      run = function() actions.report(M.repository(), M.mode(), "markdown") end,
+      run = function() actions.report(M.repository(), M.mode(), "markdown", M.refresh) end,
     },
     -- The three keys of the mode, together and after the ones about a line:
     -- they are the panel's own, like refreshing and closing are, and what they

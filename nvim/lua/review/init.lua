@@ -126,7 +126,7 @@ function M.seen_and_next() require("review.panel").seen_and_next() end
 ---tags XML by default
 function M.report(opts)
   local panel = require "review.panel"
-  require("review.actions").report(panel.repository(), panel.mode(), opts and opts.format or "xml")
+  require("review.actions").report(panel.repository(), panel.mode(), opts and opts.format or "xml", panel.refresh)
 end
 
 return M

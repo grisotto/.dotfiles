@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723xn2ga
 title: Gerar o relatório é entregar
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:05.625295942Z'
-updated: '2026-09-11T13:15:04.860234298Z'
+updated: '2026-09-11T21:00:32.508515120Z'
+closed: '2026-09-11T21:00:32.508515120Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,15 +15,15 @@ tags:
 - review
 acceptance:
 - title: Gerar entrega as abertas do modo e o relatório seguinte só traz as anotadas depois
-  done: false
+  done: true
 - title: Gerar sem abertas refaz a última entrega congelada, idêntica em qualquer formato, e a notificação diz isso
-  done: false
+  done: true
 - title: Sem abertas e sem entrega, nada é copiado e a mensagem continua a de hoje
-  done: false
+  done: true
 - title: Contagem do painel conta só abertas; anotar ponto entregue começa anotação nova
-  done: false
+  done: true
 - title: Estado ganha entregas por acréscimo, sem perder vistos e anotações existentes
-  done: false
+  done: true
 deps:
 - nvi-01m2723w2zb5
 ---
@@ -54,3 +55,7 @@ Decidir junto com a entrega: o modelo do preâmbulo (nvi-01m2723wvpey) é lido d
 **2026-09-11T13:15:04.860234298Z**
 
 Correção da nota anterior: o texto do modelo do preâmbulo agora é lido em build e viaja no próprio relatório (ReviewReport.template), e o render lê só o relatório. Congelar o relatório inteiro na entrega congela também o modelo, e o refazer reproduz o preâmbulo do momento da geração; deixar o template de fora do congelado é o que faria o refazer seguir o arquivo atual.
+
+**2026-09-11T21:00:32.508515120Z**
+
+Gerar (R/M) congela a entrega no documento de estado (cabeçalho, itens, tipos usados e modelo do preâmbulo) e marca as abertas; sem abertas refaz a última entrega do modo, idêntica, com a quickfix reancorada na hora; contagem e ponto só contam abertas; esquema aditivo, versão 1.

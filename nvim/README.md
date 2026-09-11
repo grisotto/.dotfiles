@@ -509,7 +509,9 @@ no diff de staged, ou o commit no diff de um commit ou de um intervalo. A linha 
 do índice e a linha 5 do disco são pontos diferentes, porque são linhas
 diferentes. Dois textos escritos no mesmo ponto
 são um só, corrigido — anotar de novo abre a entrada já preenchida, e apagar o
-texto todo remove a anotação.
+texto todo remove a anotação. Isso vale para a anotação aberta: depois que ela
+saiu num relatório (veja [Depois de `R`](#depois-de-r)), anotar o mesmo ponto
+abre a entrada vazia e grava uma anotação nova, porque é outro pedido.
 
 Toda anotação tem um tipo, que diz ao agente o que você está pedindo com ela. Ao
 anotar — uma linha, um trecho ou o arquivo, na entrada curta ou na longa — o
@@ -638,8 +640,25 @@ entende melhor (ADR-0006).
 O documento inteiro vai para a área de transferência (`+`) e para o registro
 sem nome (`"`), no formato da tecla apertada. Cada formato também grava o seu
 arquivo, `.xml` ou `.md` (veja [Onde as coisas são gravadas](#onde-as-coisas-são-gravadas)),
-e a notificação diz as duas coisas. Numa revisão sem anotação nada é copiado — o
-que estava na área de transferência continua lá.
+e a notificação diz as duas coisas.
+
+Gerar é entregar (ADR-0012): as anotações abertas do modo saem no relatório e
+passam a entregues, e a contagem `✎ N` do painel conta só as abertas — o que
+falta mandar. Depois que o agente ajusta o código, o que você anotar sai sozinho
+no próximo relatório, sem o que ele já recebeu. Anotar um ponto que tem anotação
+entregue abre a entrada vazia e grava uma anotação nova.
+
+Gerar sem nenhuma anotação aberta refaz a última entrega do modo, no formato da
+tecla — para trocar de formato ou copiar de novo —, e a notificação diz
+`relatório da última entrega (N anotações) copiado`. Ela sai idêntica ao que o
+agente recebeu: o cabeçalho, o preâmbulo, as linhas e o código citado do momento
+da entrega, mesmo que o arquivo, o modelo do preâmbulo ou a instrução de um tipo
+tenham mudado depois. Só a quickfix é procurada de novo no disco. Sem anotação
+aberta e sem entrega no modo, nada é copiado — o que estava na área de
+transferência continua lá. Entregas são de um modo só, como as anotações: a
+entrega do working tree não é refeita no relatório de um commit. Todas ficam
+guardadas no documento de estado (veja
+[Onde as coisas são gravadas](#onde-as-coisas-são-gravadas)).
 
 O documento tem três partes, e nenhuma data:
 
@@ -701,9 +720,10 @@ configuração é este repositório: o modelo fica dentro dele, e entra no git s
 você o commitar), ou o
 caminho absoluto em `preamble_template`, em `lua/polish.lua`. Sem o arquivo,
 vale o preâmbulo embutido, o `PREAMBLE` de `lua/review/report.lua`, que é o
-ponto de partida para copiar. O arquivo é lido a cada geração — a edição vale no
-próximo `R` ou `M`, sem reiniciar o editor —, e os dois formatos levam o mesmo
-preâmbulo.
+ponto de partida para copiar. O arquivo é lido a cada entrega — a edição vale no
+próximo relatório com anotação aberta, sem reiniciar o editor —, e os dois
+formatos levam o mesmo preâmbulo. Uma entrega refeita sai com o preâmbulo com que
+foi entregue.
 
 | Marcador | O que o relatório põe no lugar |
 | --- | --- |
@@ -746,7 +766,7 @@ seria uma apresentação a menos coberta pelos testes.
 Nunca dentro do repositório revisado, para a revisão não sujar a lista que o
 próprio painel está mostrando:
 
-- vistos e anotações: `~/.local/share/nvim/review/<raiz do repo>.json`
+- vistos, anotações e entregas: `~/.local/share/nvim/review/<raiz do repo>.json`
 - relatório: `~/.local/share/nvim/review/reports/<raiz do repo>-<modo>.xml` (`R`)
   e `<raiz do repo>-<modo>.md` (`M`), cada um regravado a cada geração no seu
   formato, com o modo sendo `worktree`, `commit-<sha>` ou `range-<sha>..<sha>`
@@ -855,7 +875,7 @@ atualização do ADR-0009.
    linha anota a linha. Antes do texto vem o seletor de tipo, com `issue`
    primeiro e a instrução de cada tipo ao lado; escolha `question` e a entrada
    diz `question em a.txt:N`. `<Esc>` no seletor desiste sem pedir texto. A
-   contagem aparece na linha do painel (`M  a.txt  ✎ 2`).
+   contagem das abertas aparece na linha do painel (`M  a.txt  ✎ 2`).
    Anotar o mesmo ponto de novo traz o tipo dela primeiro no seletor e abre a
    entrada já preenchida; escolher outro tipo troca o tipo, e apagar o texto
    todo remove a anotação. `A` e `<Leader>gA` passam pelo mesmo seletor e abrem
@@ -878,10 +898,11 @@ atualização do ADR-0009.
    `annotation_types` em `lua/polish.lua`, o tipo novo aparece no fim do
    seletor, e o que troca a instrução de um existente aparece com a nova.
    Com `annotation_type_entry = "prefix"`, `<Leader>ga` abre a entrada direto,
-   sem seletor, dizendo só `a.txt:N`; escreva `question: por que isto?` e gere
-   o relatório: o item é `question` e o texto não tem o prefixo. `nota: algo`
-   sai `issue` com o texto inteiro. Anotar o mesmo ponto de novo traz
-   `question: por que isto?` na entrada; trocar para `test:` troca o tipo.
+   sem seletor, dizendo só `a.txt:N`; escreva `question: por que isto?`. Anotar
+   o mesmo ponto de novo traz `question: por que isto?` na entrada; trocar para
+   `test:` troca o tipo. Anote outra linha com `nota: algo` e gere o relatório:
+   o primeiro item é `test`, sem o prefixo no texto, e o outro sai `issue` com o
+   texto inteiro.
 10. **Relatório** — `R`. A notificação diz que ele foi copiado e onde foi
    gravado (`….xml`); a quickfix abre com os pontos, cada um começando com
    `#<id> <tipo>`, e o cursor fica no painel. O preâmbulo explica só os tipos
@@ -890,20 +911,29 @@ atualização do ADR-0009.
    e `HEAD <sha>`, sem data; o preâmbulo em `<instructions>`; e um `<comment>` por
    anotação com `id`, `type`, `file`, `lines`, o código citado em `<code>` e o
    texto. A anotação de arquivo inteiro vai sem `lines` e sem `<code>`; o trecho
-   anotado sai como `lines="N-M"` com todas as linhas. Agora `M`: o `.md` gravado
-   ao lado tem o mesmo cabeçalho no título, o mesmo preâmbulo e os mesmos itens,
+   anotado sai como `lines="N-M"` com todas as linhas. Agora `M`: sem anotação
+   aberta ele refaz a mesma entrega, e a notificação diz `relatório da última
+   entrega`; o `.md` gravado ao lado tem o mesmo cabeçalho no título, o mesmo preâmbulo e os mesmos itens,
    como `## <id>. issue · <arquivo>:<linhas>`, com o código na linguagem do
    arquivo. Menu de contexto, which-key e `g?` no painel mostram `R` e `M`. Num
    commit, o cabeçalho traz o sha inteiro e o assunto; num intervalo,
    `<mais antigo>^..<mais novo>`. `git status` no repositório revisado continua
    igual ao de antes. Crie `~/.config/nvim/review/preamble.md` com
-   `Olá, {agente}.`, uma linha em branco e `{types}`, e aperte `R` e `M` de novo:
-   o preâmbulo dos dois é esse texto, com `{agente}` como está e a instrução do
-   tipo no lugar de `{types}`, e sem referência nem regra do trecho não
-   encontrado. Apague o arquivo e gere: o preâmbulo embutido volta.
+   `Olá, {agente}.`, uma linha em branco e `{types}`, e aperte `R`: sem anotação
+   aberta, a entrega refeita continua com o preâmbulo de antes. Anote outra linha
+   e aperte `R` e `M`: o preâmbulo dos dois é esse texto, com `{agente}` como está
+   e a instrução do tipo no lugar de `{types}`, e sem referência nem regra do
+   trecho não encontrado. Apague o arquivo, anote mais uma e gere: o preâmbulo
+   embutido volta. **Entrega**: depois do `R` a contagem some da linha do painel.
+   Anote de novo uma linha já entregue: a entrada vem vazia, a contagem volta a
+   `✎ 1`, e o `R` seguinte traz só essa anotação. Edite no disco a linha dela,
+   salve e aperte `M` e `R` sem anotar nada: o documento colado é idêntico ao da
+   entrega, a notificação diz `relatório da última entrega`, e a quickfix aponta
+   a linha de hoje. Entre num commit sem anotação e aperte `R`: nada é copiado, e
+   a notificação diz que não há o que relatar.
 11. **Reancoragem** — anote a linha 2 de um arquivo, insira duas linhas acima
-   dela, salve e gere o relatório de novo: a anotação sai na linha 4. Agora
-   apague a linha anotada, salve e gere: ela continua na lista, no lugar dela,
+   dela, salve e gere o relatório: a anotação sai na linha 4. Agora anote outra
+   linha, apague-a, salve e gere: ela sai na lista, no lugar dela,
    marcada como não encontrada (`status="not-found"`, ou ` · trecho não
    encontrado` no markdown), sem linhas e com o código que havia quando foi
    escrita; só então o preâmbulo traz a regra do trecho não encontrado. Na

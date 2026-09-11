@@ -7,6 +7,7 @@ local entry = require "tests.helpers.entry"
 local fixture = require "tests.helpers.fixture"
 local graph = require "tests.helpers.graph"
 local input = require "tests.helpers.input"
+local notify = require "tests.helpers.notify"
 local panel = require "tests.helpers.panel"
 local quickfix = require "tests.helpers.quickfix"
 local report = require "tests.helpers.report"
@@ -110,6 +111,14 @@ local function generate_both_and_expect_items(expected)
   panel.feed "M"
   assert.same(expected, report.items "xml")
   assert.same(expected, report.items "markdown")
+end
+
+---Write a template of the preamble, the way the reviewer keeps one.
+---@param path string
+---@param lines string[]
+local function write_template(path, lines)
+  vim.fn.mkdir(vim.fs.dirname(path), "p")
+  assert(vim.fn.writefile(lines, path) == 0, "could not write " .. path)
 end
 
 describe("relatório de revisão", function()
@@ -351,9 +360,11 @@ describe("relatório de revisão", function()
       end
     end)
 
-    it("reancora no disco a anotação feita no índice, e a dá como não encontrada sem o texto lá", function()
-      -- É o disco que o agente edita: a linha 2 do índice está na linha 3 do
-      -- arquivo, e é essa que o relatório cita.
+    ---A repository with a line staged and the disk moved on above it — line 2
+    ---of the index is line 3 of the disk —, with line 2 of the index annotated
+    ---on the side after the change of its diff.
+    ---@return FixtureRepo
+    local function annotated_in_the_index()
       local repo = fixture.repo()
       repo:commit_file("a.txt", "um\ndois\ntrês\n")
       repo:write("a.txt", "um\ndois staged\ntrês\n")
@@ -369,6 +380,13 @@ describe("relatório de revisão", function()
       input.answer "no índice"
       review.annotate()
       panel.focus("Staged", "a%.txt")
+      return repo
+    end
+
+    it("reancora no disco a anotação feita no índice", function()
+      -- É o disco que o agente edita: a linha 2 do índice está na linha 3 do
+      -- arquivo, e é essa que o relatório cita.
+      annotated_in_the_index()
 
       generate_both_and_expect_items {
         {
@@ -381,8 +399,12 @@ describe("relatório de revisão", function()
           not_found = false,
         },
       }
+    end)
 
+    it("dá como não encontrada a anotação feita no índice cujo texto não está no disco", function()
+      local repo = annotated_in_the_index()
       repo:write("a.txt", "zero\num\ndois no disco\ntrês\n")
+
       generate_both_and_expect_items {
         { id = 1, type = "issue", file = "a.txt", code = { "dois staged" }, text = "no índice", not_found = true },
       }
@@ -426,10 +448,10 @@ describe("relatório de revisão", function()
       assert.same({}, quickfix.items())
     end)
 
-    it("leva embora os relatórios anteriores, dos dois formatos, quando a revisão fica sem anotação", function()
-      -- O relatório é sobre a revisão de agora: um documento com a observação
-      -- que o revisor tirou de volta diria o que a revisão não diz mais, e é
-      -- ele que sai do editor para o agente.
+    it("leva embora os relatórios anteriores, dos dois formatos, quando o modo fica sem o que relatar", function()
+      -- Um relatório gravado antes das entregas fica ao lado de um documento sem
+      -- entrega nenhuma. Com as anotações dele tiradas de volta, o arquivo diria
+      -- o que a revisão não diz mais, e é ele que sai do editor para o agente.
       local repo = repo_with_a_change()
 
       open_in(repo.root)
@@ -439,7 +461,8 @@ describe("relatório de revisão", function()
       assert.is_true(report.exists "xml")
       assert.is_true(report.exists "markdown")
 
-      annotate_line("Unstaged", "a%.txt", 2, "")
+      document.without "deliveries"
+      document.without "annotations"
       panel.feed "R"
 
       assert.is_false(report.exists())
@@ -502,10 +525,8 @@ describe("relatório de revisão", function()
       panel.feed "R"
 
       assert.equals(first, report.path "xml")
-      assert.same({ "primeira leitura", "segunda leitura" }, {
-        report.items("xml")[1].text,
-        report.items("xml")[2].text,
-      })
+      -- A primeira já foi entregue, e só a segunda sai no relatório novo.
+      assert.same({ "segunda leitura" }, vim.tbl_map(function(item) return item.text end, report.items "xml"))
     end)
   end)
 
@@ -848,14 +869,6 @@ describe("relatório de revisão", function()
   end)
 
   describe("preâmbulo", function()
-    ---Write a template of the preamble, the way the reviewer keeps one.
-    ---@param path string
-    ---@param lines string[]
-    local function write_template(path, lines)
-      vim.fn.mkdir(vim.fs.dirname(path), "p")
-      assert(vim.fn.writefile(lines, path) == 0, "could not write " .. path)
-    end
-
     -- A instrução do tipo vem da configuração, para o texto esperado ser o do
     -- próprio teste.
     local ISSUE = { { name = "issue", instruction = "corrija." } }
@@ -1033,6 +1046,183 @@ describe("relatório de revisão", function()
         { { file = repo.root .. "/a.txt", lnum = 0, text = "#1 issue · primeira linha …" } },
         quickfix.items()
       )
+    end)
+  end)
+
+  describe("entrega", function()
+    before_each(function() notify.install() end)
+    after_each(function() notify.restore() end)
+
+    ---The annotations of the document by text, each with the id of the delivery
+    ---it went out in, and `false` for one still open.
+    ---@return table<string, integer|false>
+    local function delivered_by_text()
+      local found = {}
+      for _, written in ipairs(document.annotations()) do
+        found[written.text] = written.delivery or false
+      end
+      return found
+    end
+
+    it("entrega as abertas do modo, e o relatório seguinte só leva as anotadas depois", function()
+      -- O agente recebeu a primeira e ajustou o código: trazê-la de novo o faria
+      -- refazer o que já fez (ADR-0012).
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "primeira rodada")
+      panel.feed "R"
+      annotate_line("Unstaged", "a%.txt", 3, "segunda rodada")
+
+      generate_both_and_expect_items {
+        {
+          id = 1,
+          type = "issue",
+          file = "a.txt",
+          lines = "3",
+          code = { "três" },
+          text = "segunda rodada",
+          not_found = false,
+        },
+      }
+
+      -- Todas as entregas ficam guardadas, com o que foi entregue em cada uma.
+      local deliveries = document.deliveries()
+      assert.equals(2, #deliveries)
+      assert.are_not.equal(deliveries[1].id, deliveries[2].id)
+      assert.same(
+        { ["primeira rodada"] = deliveries[1].id, ["segunda rodada"] = deliveries[2].id },
+        delivered_by_text()
+      )
+      for index, expected in ipairs {
+        { text = "primeira rodada", code = { "dois alterado" } },
+        { text = "segunda rodada", code = { "três" } },
+      } do
+        local delivery = deliveries[index]
+        assert.equals("worktree", delivery.mode)
+        assert.is_truthy(delivery.at:match "^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$", delivery.at)
+        assert.equals(repo.root, delivery.header.root)
+        assert.equals(1, #delivery.items)
+        assert.equals(expected.text, delivery.items[1].text)
+        assert.same(expected.code, delivery.items[1].code)
+      end
+    end)
+
+    it("sem abertas refaz a última entrega congelada, idêntica em qualquer formato, e diz que é refeita", function()
+      -- Refazer é para trocar de formato ou copiar de novo. O que o agente
+      -- recebeu não muda porque o arquivo, o modelo do preâmbulo ou a instrução
+      -- de um tipo mudaram depois: é contra esse pedido que o revisor valida o
+      -- que ele fez.
+      local template = fixture.plain_dir() .. "/preambulo.md"
+      write_template(template, { "Modelo da entrega.", "{types}", "{reference}" })
+      review.setup { preamble_template = template }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "arrumar isso")
+      panel.feed "R"
+      local delivered = report.text "xml"
+      local items = report.items "xml"
+      local instructions = report.instructions "xml"
+
+      repo:write("a.txt", "zero\nmeio\num\ndois alterado\ntrês\n")
+      write_template(template, { "Outro modelo.", "{types}" })
+      review.setup {
+        preamble_template = template,
+        annotation_types = { { name = "issue", instruction = "outra instrução." } },
+      }
+
+      panel.feed "M"
+      assert.same(items, report.items "markdown")
+      assert.equals(instructions, report.instructions "markdown")
+      assert.equals(report.text "markdown" .. "\n", clipboard.content())
+      assert.is_truthy(
+        notify.last():find("relatório da última entrega (1 anotação) copiado", 1, true),
+        notify.last()
+      )
+      -- A quickfix é a navegação do revisor no arquivo de hoje: é a única coisa
+      -- procurada de novo.
+      assert.same({ { file = repo.root .. "/a.txt", lnum = 4, text = "#1 issue · arrumar isso" } }, quickfix.items())
+
+      panel.feed "R"
+      assert.equals(delivered, report.text "xml")
+      assert.equals(report.text "xml" .. "\n", clipboard.content())
+      assert.equals(1, #document.deliveries())
+    end)
+
+    it("sem abertas e sem entrega no modo, não copia nada e diz que não há o que relatar", function()
+      -- As entregas são de um modo só, como as anotações: a do working tree não
+      -- é refeita no relatório de um commit.
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 3, "no working tree")
+      panel.feed "R"
+      vim.fn.setreg("+", "o que o revisor tinha copiado")
+
+      panel.feed "c"
+      graph.choose "segundo"
+      panel.feed "R"
+
+      assert.equals("o que o revisor tinha copiado", clipboard.content())
+      assert.equals("review: nenhuma anotação nesta revisão para relatar.", notify.last())
+      assert.same({}, quickfix.items())
+      assert.is_truthy(report.path("xml"):match "%-worktree%.xml$")
+    end)
+
+    it("conta no painel só as abertas, e anotar o ponto entregue começa uma anotação nova", function()
+      -- Depois da entrega o código mudou, e o que se escreve ali é outro pedido,
+      -- e não a correção do anterior.
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      confirm.answer_matching "^question "
+      annotate_line("Unstaged", "a%.txt", 2, "antes da entrega")
+      assert.same({ "M  a.txt  ✎ 1" }, panel.section "Unstaged")
+      panel.feed "R"
+      assert.same({ "M  a.txt" }, panel.section "Unstaged")
+
+      confirm.answer_matching "^issue "
+      annotate_line("Unstaged", "a%.txt", 2, "depois da entrega")
+      -- A entrada vazia, e o seletor com `issue` primeiro: nada da entregue vem
+      -- junto.
+      assert.same({ "", "" }, input.defaults())
+      assert.is_truthy(confirm.offered()[1]:match "^issue ", confirm.offered()[1])
+      assert.same({ "M  a.txt  ✎ 1" }, panel.section "Unstaged")
+      assert.same(
+        { ["antes da entrega"] = document.deliveries()[1].id, ["depois da entrega"] = false },
+        delivered_by_text()
+      )
+    end)
+
+    it("entra num documento de antes das entregas sem perder vistos nem anotações", function()
+      -- O carregamento descarta inteiro o documento de outra versão: subi-la por
+      -- causa das entregas apagaria o que o revisor já marcou e escreveu.
+      local repo = repo_with_a_change()
+      repo:write("b.txt", "já lido\n")
+
+      open_in(repo.root)
+      panel.focus("Untracked", "b%.txt")
+      panel.feed "v"
+      document.plant {
+        path = "a.txt",
+        mode = "worktree",
+        line = 2,
+        anchor = "dois alterado",
+        text = "gravada antes das entregas",
+        at = "2026-01-01T00:00:00Z",
+      }
+      document.without "deliveries"
+      panel.feed "R"
+
+      assert.equals(1, document.version())
+      assert.equals("gravada antes das entregas", report.items("xml")[1].text)
+      assert.equals(1, #document.deliveries())
+      assert.same({ ["gravada antes das entregas"] = document.deliveries()[1].id }, delivered_by_text())
+      -- O painel lê o documento a cada desenho: reaberto, o visto veio dele.
+      review.close()
+      review.open()
+      assert.equals(1, panel.section_count "Vistos")
     end)
   end)
 end)

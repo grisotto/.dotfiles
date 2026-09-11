@@ -318,17 +318,23 @@ end
 ---because it is what is left when the clipboard has moved on. Where it was
 ---written is said out loud: it is outside the repository (ADR-0004), so the
 ---path is the only way the reviewer knows where to find it.
+---
+---Generating is delivering (ADR-0012), and a delivery made again is said to be
+---one: it is not a new request, and a reviewer who took it for one would expect
+---remarks in it that are not there.
 ---@param repository string|nil absolute path of the repository root
 ---@param mode ReviewMode the review to report, which is the panel's
 ---@param format ReviewReportFormat
-function M.report(repository, mode, format)
+---@param done fun()|nil redraws the panel, whose counts a delivery takes the
+---annotations out of
+function M.report(repository, mode, format, done)
   repository = repository or git.root(vim.fn.getcwd())
   if not repository then
     vim.notify("review: fora de um repositório git.", vim.log.levels.WARN)
     return
   end
 
-  local path, count, document = report.generate(repository, mode, format)
+  local path, count, document, redone = report.generate(repository, mode, format)
   -- Nothing is copied from an empty review: what the reviewer had in the
   -- clipboard is worth more than a report that says nothing.
   if not document then
@@ -340,8 +346,11 @@ function M.report(repository, mode, format)
   -- already warned about: the document was built all the same, and pasting it
   -- is what it is for.
   to_clipboard(document)
-  local copied = ("review: relatório com %d %s copiado"):format(count, count == 1 and "anotação" or "anotações")
+  local annotations = ("%d %s"):format(count, count == 1 and "anotação" or "anotações")
+  local copied = redone and ("review: relatório da última entrega (%s) copiado"):format(annotations)
+    or ("review: relatório com %s copiado"):format(annotations)
   vim.notify(path and ("%s; gravado em %s"):format(copied, path) or copied)
+  if done then done() end
 end
 
 ---Say it when git refused. Everything here changes the repository, and a

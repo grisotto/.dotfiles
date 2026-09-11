@@ -102,6 +102,7 @@ describe("mouse e descoberta das ações", function()
         ["c"] = "Abrir o grafo de commits",
         ["C"] = "Abrir o grafo alternativo",
         ["w"] = "Voltar ao working tree",
+        ["g?"] = "Ver todas as teclas",
         ["r"] = "Atualizar",
         ["q"] = "Fechar o painel",
       }, menu.actions())

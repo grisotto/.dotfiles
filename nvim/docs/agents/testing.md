@@ -229,6 +229,14 @@ a tecla vão ao editor como uma sequência só (`visual.press_on_lines`).
 O relatório ir para a área de transferência é lido pelo quinto item, como os
 caminhos copiados: o que se afirma é que o texto copiado é o documento gravado.
 
+A ajuda das teclas (`g?`) não trouxe item novo: é uma janela com um buffer,
+achada pelo filetype e lida como a entrada longa é lida pelo oitavo item. No
+painel o que se afirma é que ela lista, tecla por tecla, o que a tabela de
+mapeamentos do buffer descreve (décimo terceiro item) — as duas saem da mesma
+lista, e o teste é o que prova que não divergiram. No diff, que ela lista as
+teclas que a winbar deixou de escrever e as globais que valem nele. As teclas
+que a winbar escreve são lidas pelo terceiro item, como sempre foram.
+
 O segundo grafo, o do gitgraph, fica sem teste como a delegação ao diffview e ao
 neogit ficam, e pelo mesmo motivo (ADR-0005): é uma chamada de uma linha, e
 cobri-la exigiria um backend falso. O que o hook dele faz — `review.commit` — é
@@ -366,6 +374,11 @@ estar anotando (`entry.title`), escreve nela como o revisor escreve
 (`entry.type`) e termina pelas duas teclas da borda (`entry.save`,
 `entry.cancel`).
 
+`tests/helpers/help.lua` lê a janela de ajuda como o revisor a vê: acha a janela
+pelo filetype, devolve o título da borda (`help.title`) e as teclas listadas com
+o que cada uma faz (`help.keys`, por tecla), e manda teclas para ela
+(`help.feed`), que é como ela se fecha.
+
 `tests/helpers/visual.lua` seleciona linhas na janela em que o revisor está e
 aperta uma tecla sobre a seleção (`visual.press_on_lines(2, 3, "<Leader>ga")`),
 como o `graph.choose_range` faz no grafo. Uma última linha acima da primeira é
@@ -500,6 +513,15 @@ possa ler antes nem depois; o que ela cobre é o que a tecla faz enquanto o diff
 está de pé. À mão, num editor com a configuração real: com o diff fechado, `]c`
 volta a ser o pulo do próprio editor entre as mudanças de um `:diffthis`, e o
 `]g` do gitsigns segue sendo o dele em qualquer arquivo.
+
+O heirline, que escreve a winbar dele por cima da do diff no arquivo do revisor
+(veja `debugging.md`). A suíte não tem AstroNvim, então o teste põe no lugar
+dele um plugin de mentira que escreve do mesmo jeito — `vim.opt_local.winbar`
+de dentro de um autocmd de `BufWinEnter` e `FileType` — e afirma a winbar que
+fica na tela depois do giro do laço (terceiro item). O que se verifica à mão,
+num editor com a configuração real: com o diff aberto, `:edit` no lado do
+working tree e a volta com `<C-o>` depois de um `go` deixam `fechar q` e
+`ajuda g?` na barra.
 
 A tecla que a linha do próximo passo nomeia no working tree (`<Leader>gnc`, a
 página de commit do neogit). Ela não é nossa e não está nesta configuração: quem

@@ -5,10 +5,10 @@
 -- dedicated venv for the Python3 provider (pynvim), managed with uv
 vim.g.python3_host_prog = vim.fn.expand "~/.local/share/nvim-venv/bin/python"
 
--- Painel de revisão (lua/review/). O setup também mapeia as teclas de anotar
--- (`<Leader>ga`/`<Leader>gA`, trocáveis em `mappings.annotate_line` e
--- `mappings.annotate_line_long`); os outros atalhos globais estão em
--- lua/plugins/review.lua.
+-- Painel de revisão (lua/review/). O setup também mapeia as teclas globais da
+-- revisão — anotar (`<Leader>ga`/`<Leader>gA`) e marcar como visto e abrir a
+-- próxima (`<Leader>gv`), trocáveis em `mappings` —; a de abrir o painel
+-- (`<Leader>r`) está em lua/plugins/review.lua.
 require("review").setup {
   position = "left",
   width = 40,

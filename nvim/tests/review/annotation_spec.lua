@@ -3,6 +3,7 @@ local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
 local fixture = require "tests.helpers.fixture"
+local help = require "tests.helpers.help"
 local input = require "tests.helpers.input"
 local panel = require "tests.helpers.panel"
 local review = require "review"
@@ -260,17 +261,18 @@ describe("anotação", function()
     end)
   end)
 
-  describe("na winbar do diff", function()
-    it("escreve as teclas de anotar quando o lado da direita é o arquivo do revisor", function()
+  describe("na ajuda do diff", function()
+    it("lista as teclas de anotar quando o lado da direita é o arquivo do revisor", function()
       local repo = repo_with_a_change()
 
       open_in(repo.root)
       panel.focus("Unstaged", "a%.txt")
       panel.feed "<CR>"
+      diff.feed "g?"
 
-      local bars = diff.winbars()
-      assert.matches("anotar%s+<Leader>ga%s+<Leader>gA", bars[#bars])
-      assert.is_not.matches("anotar", bars[1])
+      local keys = help.keys()
+      assert.matches("^Anotar a linha", keys["<Leader>ga"])
+      assert.matches("várias linhas", keys["<Leader>gA"])
     end)
 
     it("não oferece anotar num diff em que os dois lados são versões", function()
@@ -282,10 +284,11 @@ describe("anotação", function()
       open_in(repo.root)
       panel.focus("Staged", "a%.txt")
       panel.feed "<CR>"
+      diff.feed "g?"
 
-      local bars = diff.winbars()
-      assert.equals(2, #bars)
-      assert.is_not.matches("anotar", bars[2])
+      local keys = help.keys()
+      assert.is_nil(keys["<Leader>ga"])
+      assert.is_nil(keys["<Leader>gA"])
     end)
 
     it("não toma para o diff as teclas de anotar, que são do editor inteiro", function()
@@ -308,16 +311,19 @@ describe("anotação", function()
       end
     end)
 
-    it("escreve a tecla que está mapeada, também quando o revisor a troca", function()
+    it("lista a tecla que está mapeada, também quando o revisor a troca", function()
       review.setup { mappings = { annotate_line = "<Leader>n", annotate_line_long = "<Leader>N" } }
       local repo = repo_with_a_change()
 
       open_in(repo.root)
       panel.focus("Unstaged", "a%.txt")
       panel.feed "<CR>"
+      diff.feed "g?"
 
-      local bars = diff.winbars()
-      assert.matches("anotar%s+<Leader>n%s+<Leader>N", bars[#bars])
+      local keys = help.keys()
+      assert.is_not_nil(keys["<Leader>n"])
+      assert.is_nil(keys["<Leader>ga"])
+      help.feed "q"
       -- A tecla antiga sai, nos dois modos: trocar é mover, e não somar.
       assert.equals("", vim.fn.maparg("<Leader>ga", "n"))
       assert.equals("", vim.fn.maparg("<Leader>ga", "x"))

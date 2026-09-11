@@ -108,3 +108,16 @@ estado de sessão — aba, layout, painel fechado —, e não a configuração.
 estava montado, e o painel não estava na aba. O `step` procurava a janela da
 lista e desistia calado. Virou a atualização do ADR-0009 — a revisão anda com a
 lista fechada — e as mensagens que dizem o que a impediu.
+
+A winbar do diff que "às vezes não aparecia": a suíte verde e a reprodução
+headless mostravam a winbar escrita logo depois de montar o diff. O que separou
+os dois foi disparar um `BufWinEnter` no lado do working tree com a
+configuração real e perguntar de quem era a opção — `verbose setlocal winbar?`
+em cada janela respondeu `%{%v:lua.require'heirline'.eval_winbar()%}`, `Last set
+from init.lua`. O heirline do AstroNvim escreve a winbar dele a cada
+`BufWinEnter` e `FileType` de buffer de arquivo, e o lado do working tree é o
+arquivo do revisor; o lado que é rev é `nofile`, que o AstroNvim deixa de fora,
+e por isso só um lado perdia. A primeira ideia, reescrever no `OptionSet`, não
+serve: o heirline escreve de dentro de um autocmd dele, e autocmds não aninham —
+o evento não vem. O diff reescreve a dele nos mesmos dois eventos, no giro
+seguinte do laço.

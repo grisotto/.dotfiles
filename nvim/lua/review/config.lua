@@ -38,6 +38,8 @@ local M = {}
 ---@field annotate_long string key that writes it in the entry of several lines
 ---@field annotate_line string global key that writes the annotation of the line being read, or of the lines selected
 ---@field annotate_line_long string global key that writes it in the entry of several lines
+---@field seen_and_open_next string global key that marks what is being read as seen and opens the next one still to read
+---@field help string key of the panel and of the diff that lists every key of where the reviewer is
 ---@field report string key that generates the report of the review under way
 ---@field graph string key that opens the graph of commits, to review one of them
 ---@field graph_alternate string key that opens the graph the other way
@@ -167,6 +169,18 @@ local defaults = {
     -- the winbar of the diff writes them from the same values.
     annotate_line = "<Leader>ga",
     annotate_line_long = "<Leader>gA",
+    -- The `<Space>` of the panel from inside the file being read, global like
+    -- the pair above and mapped by `setup` for the same reason: the help of the
+    -- diff lists it, and lists the key that is really mapped. `v` is the letter
+    -- of visto, as in the panel; alone, in a file, it is visual mode.
+    seen_and_open_next = "<Leader>gv",
+    -- "?" is what help is in the readers that have one, and the `g` in front is
+    -- what lets it be the same key in the panel and in the diff: one side of a
+    -- diff is the reviewer's own file, where `?` alone is the search backwards.
+    -- What the `g` shadows there is the editor's rot13, and only while the diff
+    -- is up — diffview and mason answer the same key the same way. In the panel
+    -- `gg` still reaches the top: `g?` is not a prefix of it.
+    help = "g?",
     -- "R" for "relatório", beside the "r" that refreshes: the two are the
     -- panel's own keys, about the review and not about a line of it.
     report = "R",

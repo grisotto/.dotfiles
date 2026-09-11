@@ -38,7 +38,9 @@ local M = {}
 ---@field label string what it does, in the reviewer's words, as the winbar has room for it
 ---@field desc string|nil the whole of it, for the mapping; the label when absent
 ---@field run fun()|nil nil on a key of the editor that the diff only names: it is
----written in the winbar and mapped by whoever it belongs to
+---listed in the help and mapped by whoever it belongs to
+---@field written boolean|nil whether the winbar writes it; every key is listed in
+---the help either way
 
 ---@class ReviewDiffMount what one diff put on the screen, and everything that
 ---has to be given back when it leaves
@@ -48,6 +50,8 @@ local M = {}
 ---one of the presentations of a line under review; nil for a consultation of a
 ---rev, which is not a line of the list being shown
 ---@field winbar table<integer, string> the winbar each window had before, by winid
+---@field bars table<integer, string> the winbar the diff wrote in each window, by
+---winid — what it writes back when something else writes over it
 ---@field keys ReviewDiffKey[] the keys mapped in every buffer of the diff
 ---@field mappings table[] the buffer local mappings the keys of the diff wrote
 ---over, as `mapset` takes them back
@@ -177,34 +181,27 @@ end
 local function literal(text) return (text:gsub("%%", "%%%%")) end
 
 ---The winbar of one window of the diff: the side it is showing on the left,
----and, on the window that carries them, the keys of the diff aligned to the
+---and, on the window that carries them, the keys it writes aligned to the
 ---right. The key goes beside what it does, which is how the context menu writes
 ---the same pair (ADR-0008) — the answer to "how do I close this" in the place
 ---where the question is asked.
 ---
----Keys sharing a label are written together, under it: a pair that goes forward
----and back through the same thing is one thing with two keys, and writing the
----label twice would say there are two.
+---Only the keys marked as written: the way out, and the key that lists every
+---other one in the help. A winbar too long for its window loses what is between
+---the name of the side and the end, and with every key written what was lost
+---was the keys — sometimes all of them, the name of the side left alone on the
+---bar.
 ---@param label string
 ---@param keys ReviewDiffKey[]|nil
 ---@return string
 local function winbar(label, keys)
   local bar = " " .. literal(label)
-  if not keys or #keys == 0 then return bar end
 
-  local labels, keys_of = {}, {}
-  for _, key in ipairs(keys) do
-    if not keys_of[key.label] then
-      labels[#labels + 1] = key.label
-      keys_of[key.label] = {}
-    end
-    table.insert(keys_of[key.label], key.key)
+  local written = {}
+  for _, key in ipairs(keys or {}) do
+    if key.written then written[#written + 1] = ("%s  %s"):format(key.label, key.key) end
   end
-
-  local written = vim.tbl_map(
-    function(written_label) return ("%s  %s"):format(written_label, table.concat(keys_of[written_label], " ")) end,
-    labels
-  )
+  if #written == 0 then return bar end
   return bar .. "%=" .. literal(table.concat(written, "    ")) .. " "
 end
 
@@ -376,6 +373,40 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   end,
 })
 
+---The winbar of a side is the diff's while the diff is up, and the statusline
+---plugin of the configuration writes over it: heirline, under AstroNvim, writes
+---its own winbar on every `BufWinEnter` and `FileType` of a file buffer, and the
+---working tree side is one — the reviewer's own file. A `:edit`, a jump back
+---into it, a plugin setting its filetype again, and the bar lost the keys of the
+---diff with nothing on screen saying why.
+---
+---Written back on the same two events, on the turn of the loop after them. Not
+---on `OptionSet`: the other plugin writes from an autocommand of its own, and
+---autocommands do not nest, so that event never comes. And not right away,
+---because in whichever order the two autocommands run, the one that runs later
+---has to be ours. Only while the diff is still up — taking it down forgets the
+---mount before giving the windows their winbar back — and only in a window
+---still showing a side of it: one given another buffer is being let go.
+vim.api.nvim_create_autocmd({ "BufWinEnter", "FileType" }, {
+  group = GROUP,
+  desc = "Devolver a winbar do diff às janelas dele quando outro plugin a troca",
+  callback = function()
+    vim.schedule(function()
+      for _, mount in pairs(mounted_by_tab) do
+        for win, ours in pairs(mount.bars) do
+          if
+            vim.api.nvim_win_is_valid(win)
+            and vim.tbl_contains(mount.bufs, vim.api.nvim_win_get_buf(win))
+            and vim.wo[win].winbar ~= ours
+          then
+            vim.wo[win].winbar = ours
+          end
+        end
+      end
+    end)
+  end,
+})
+
 ---How the key that brings the diff back is known to be ours when it is time to
 ---give it back: it is written on the reviewer's own file, where the editor and
 ---their configuration write too.
@@ -518,7 +549,7 @@ local function build(target, sides, focused_side, keys, entry)
   local mapped = vim.tbl_filter(function(key) return key.run ~= nil end, keys)
 
   ---@type ReviewDiffMount
-  local mount = { wins = opened, bufs = bufs, winbar = {}, keys = mapped, mappings = {}, entry = entry }
+  local mount = { wins = opened, bufs = bufs, winbar = {}, bars = {}, keys = mapped, mappings = {}, entry = entry }
   local tab = vim.api.nvim_get_current_tabpage()
   -- A diff on the screen is the diff to come back to, so whatever way back a
   -- file of this tabpage was holding is over — including the one this very
@@ -528,7 +559,8 @@ local function build(target, sides, focused_side, keys, entry)
 
   for index, win in ipairs(opened) do
     mount.winbar[win] = vim.api.nvim_get_option_value("winbar", { scope = "local", win = win })
-    vim.wo[win].winbar = winbar(sides[index].label, index == #opened and keys or nil)
+    mount.bars[win] = winbar(sides[index].label, index == #opened and keys or nil)
+    vim.wo[win].winbar = mount.bars[win]
   end
   for _, bufnr in ipairs(bufs) do
     -- Everything the keys are about to write over is read before any of them is
@@ -573,6 +605,7 @@ local function closing_key(panel)
   return {
     key = config.options.mappings.close,
     label = "fechar",
+    written = true,
     desc = "Fechar o diff e voltar ao painel",
     run = function()
       -- The mapping is buffer local and the working tree side is the reviewer's
@@ -620,7 +653,7 @@ local function stepping_keys()
     end
   end
 
-  -- One label for each pair, which is what the winbar writes them under.
+  -- One label for each pair: the two keys are one thing, forward and back.
   local left_to_read, every_file = "não vista", "todas"
   return {
     {
@@ -762,7 +795,7 @@ local function changing_keys()
     end
   end
 
-  -- One label for the pair, which is what the winbar writes them under.
+  -- One label for the pair: the two keys are one thing, forward and back.
   local inside_the_file = "mudança"
   return {
     {
@@ -810,22 +843,60 @@ local function opening_key(target)
   }
 end
 
----The keys that annotate the line being read, or the lines selected in it.
+---The global keys of the review that work from inside the diff: the pair that
+---annotates the line being read, or the run of lines selected in it, and the
+---one that marks it as seen and opens the next one still to read.
 ---
----They are not the diff's: they are global, and work in any file of the
----repository (`lua/plugins/review.lua`). The diff only names them, because the
----diff is where the reviewer is reading when the remark occurs to them, and a
----key nobody sees is a key nobody presses. Named last: a winbar too long for its
----window keeps the name of the side and the end of the keys, and loses what is
----between them.
+---They are not the diff's: `setup` maps them, and they work in any file of the
+---repository. The diff only names them, in its help, because the diff is where
+---the reviewer is reading when the remark occurs to them — and what it names
+---comes from the same options `setup` mapped them from.
+---@param annotating boolean whether the pair that annotates is offered
 ---@return ReviewDiffKey[]
-local function annotating_keys()
+local function global_keys(annotating)
   local mappings = config.options.mappings
-  -- One label for the pair, which is what the winbar writes them under.
-  local label = "anotar"
+  local keys = {}
+  if annotating then
+    keys[#keys + 1] = {
+      key = mappings.annotate_line,
+      label = "anotar",
+      desc = "Anotar a linha, ou o trecho selecionado",
+    }
+    keys[#keys + 1] = {
+      key = mappings.annotate_line_long,
+      label = "anotar",
+      desc = "Anotar a linha, ou o trecho selecionado, na entrada de várias linhas",
+    }
+  end
+  keys[#keys + 1] = {
+    key = mappings.seen_and_open_next,
+    label = "visto",
+    desc = "Marcar como visto e abrir a próxima não vista",
+  }
+  return keys
+end
+
+---The key that lists every key of the diff in the help window, with what each
+---one does: the winbar writes two of them, and the rest are there.
+---
+---Guarded like the keys beside it, and for the same reason: the mapping is
+---buffer local and one of the sides is the reviewer's own file, which can be
+---open in other windows too.
+---@param keys fun(): ReviewDiffKey[] the keys of the diff — the list this key is
+---part of, asked for when it is pressed
+---@return ReviewDiffKey
+local function helping_key(keys)
+  local toggle = config.options.mappings.help
   return {
-    { key = mappings.annotate_line, label = label },
-    { key = mappings.annotate_line_long, label = label },
+    key = toggle,
+    label = "ajuda",
+    desc = "Ver todas as teclas do diff, com o que cada uma faz",
+    written = true,
+    run = function()
+      if not mount_of(vim.api.nvim_get_current_win()) then return end
+      local listed = vim.tbl_map(function(key) return { key = key.key, desc = key.desc or key.label } end, keys())
+      require("review.help").open("Teclas do diff", listed, toggle)
+    end,
   }
 end
 
@@ -834,8 +905,8 @@ end
 ---that show the change on a line get them — a reviewer walking the list is
 ---walking it whether the file is conflicted or not.
 ---
----The keys that annotate go along only when the side on the right — where the
----eye ends up, and where the winbar is written — is the reviewer's own file. An
+---The keys that annotate are named only when the side on the right — where the
+---eye ends up — is the reviewer's own file. An
 ---annotation is written on the file itself, and on a side that is a rev — both
 ---sides of a staged diff, every version of a conflict — the key is refused: a
 ---key offered to be refused is worse than no key at all.
@@ -852,7 +923,9 @@ local function reviewing_keys(target, sides)
     vim.list_extend(vim.list_extend({ closing_key(target.panel) }, { opening_key(target) }), changing_keys()),
     stepping_keys()
   )
-  if sides[#sides].rev == nil then vim.list_extend(keys, annotating_keys()) end
+  vim.list_extend(keys, global_keys(sides[#sides].rev == nil))
+  -- Beside the way out, where the winbar writes them together.
+  table.insert(keys, 2, helping_key(function() return keys end))
   return keys
 end
 
@@ -1052,6 +1125,7 @@ function M.open_rev(target, rev)
   local back = {
     key = config.options.mappings.close,
     label = "voltar",
+    written = true,
     desc = "Voltar ao que estava ao lado do painel",
     run = function() leave(win, target.panel, previous) end,
   }

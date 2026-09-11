@@ -1199,6 +1199,14 @@ local function panel_actions()
       desc = "Sair do modo commit e voltar a listar o working tree",
       run = M.worktree,
     },
+    -- With the panel's own keys, because it is about the panel and not about a
+    -- line of it: every key above, with what it does, one key away.
+    {
+      key = mappings.help,
+      label = "Ver todas as teclas",
+      desc = "Ver todas as teclas do painel, com o que cada uma faz",
+      run = function() M.help() end,
+    },
     { key = mappings.refresh, label = "Atualizar", desc = "Atualizar o painel de revisão", run = M.refresh },
     { key = mappings.close, label = "Fechar o painel", desc = "Fechar o painel de revisão", run = M.close },
   }
@@ -1279,6 +1287,21 @@ local function offered_in(panel)
     if not silent then offered[#offered + 1] = { label = action.label, key = action.key, run = action.run } end
   end
   return keys, offered
+end
+
+---List every key of the panel in the help window: the ones the mode offers,
+---with the words which-key shows for them, in the order the menu lists them.
+---The same list the keys were mapped from (`offered_in`), read when the key is
+---pressed, so the window cannot list a key the panel does not have.
+function M.help()
+  local panel = current()
+  if not panel then return end
+
+  local keys = {}
+  for _, key in ipairs((offered_in(panel))) do
+    if key.desc then keys[#keys + 1] = { key = key.key, desc = key.desc } end
+  end
+  require("review.help").open("Teclas do painel", keys, config.options.mappings.help)
 end
 
 ---Put the panel's actions where the reviewer reaches them: the keys of its

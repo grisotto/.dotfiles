@@ -191,7 +191,7 @@ describe("o arquivo no ponto que está sendo lido", function()
     assert.same({}, ours)
   end)
 
-  it("a winbar escreve a tecla ao lado do que ela faz", function()
+  it("a ajuda do diff lista a tecla com o que ela faz", function()
     local repo = fixture.repo()
     repo:commit_file("a.txt", "um\n")
     repo:write("a.txt", "dois\n")
@@ -199,8 +199,8 @@ describe("o arquivo no ponto que está sendo lido", function()
     open_in(repo.root)
     panel.focus("Unstaged", "a%.txt")
     panel.feed "<CR>"
+    diff.feed "g?"
 
-    local bars = diff.winbars()
-    assert.matches("o arquivo%s+go", bars[#bars])
+    assert.equals("Abrir o arquivo no disco no ponto que está sendo lido", require("tests.helpers.help").keys()["go"])
   end)
 end)

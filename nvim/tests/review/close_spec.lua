@@ -6,6 +6,10 @@ local review = require "review"
 
 local config_root = vim.fn.getcwd()
 
+---The autocommand group of the statusline plugin a test stands in for, which
+---writes its own winbar over the diff's the way heirline does.
+local STATUSLINE_GROUP = "test-statusline"
+
 ---Open the review panel with the editor sitting inside `dir`.
 ---@param dir string
 local function open_in(dir)
@@ -73,6 +77,7 @@ describe("fechar o diff", function()
   before_each(function() review.setup {} end)
 
   after_each(function()
+    pcall(vim.api.nvim_del_augroup_by_name, STATUSLINE_GROUP)
     editor.reset()
     -- `cd`, not `chdir`: a tabpage local directory of a test would otherwise
     -- outlive it.
@@ -129,6 +134,30 @@ describe("fechar o diff", function()
       assert.matches("fechar%s+q", bars[3])
       assert.is_not.matches("fechar", bars[1])
       assert.is_not.matches("fechar", bars[2])
+    end)
+
+    it("volta depois que outro plugin escreve a winbar dele no arquivo do revisor", function()
+      -- É o que o heirline do AstroNvim faz a cada BufWinEnter e FileType de um
+      -- buffer de arquivo, de dentro de um autocmd dele — e o lado do working
+      -- tree é o arquivo do revisor. O plugin de mentira escreve do mesmo jeito.
+      -- Apagado no `after_each`, para um teste que falhe aqui não deixar o
+      -- plugin de mentira escrevendo nos testes seguintes.
+      local statusline = vim.api.nvim_create_augroup(STATUSLINE_GROUP, { clear = true })
+      vim.api.nvim_create_autocmd({ "BufWinEnter", "FileType" }, {
+        group = statusline,
+        callback = function() vim.opt_local.winbar = "outro plugin" end,
+      })
+      local repo = repo_with_a_change()
+      local file = open_diff(repo)
+
+      local right = diff.right()
+      vim.api.nvim_win_call(right, function() vim.api.nvim_exec_autocmds("BufWinEnter", { buffer = file }) end)
+      assert.equals("outro plugin", vim.wo[right].winbar)
+      settle()
+
+      local bars = diff.winbars()
+      assert.matches("fechar%s+q", bars[2])
+      assert.matches("índice", bars[1])
     end)
   end)
 

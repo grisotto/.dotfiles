@@ -1,5 +1,6 @@
 local diff = require "tests.helpers.diff"
 local fixture = require "tests.helpers.fixture"
+local help = require "tests.helpers.help"
 local notify = require "tests.helpers.notify"
 local panel = require "tests.helpers.panel"
 local review = require "review"
@@ -472,20 +473,22 @@ describe("o laço de dentro do diff", function()
     end)
   end)
 
-  describe("a winbar", function()
-    it("escreve as teclas ao lado do que elas fazem", function()
+  describe("a ajuda do diff", function()
+    it("lista as teclas do laço com o que elas fazem", function()
       local repo = repo_with_three_changes()
 
       open_in(repo.root)
       panel.focus("Unstaged", "a%.txt")
       panel.feed "<CR>"
+      diff.feed "g?"
 
-      local bars = diff.winbars()
-      assert.matches("mudança%s+%]c%s+%[c", bars[#bars])
-      assert.matches("não vista%s+%]f%s+%[f", bars[#bars])
-      assert.matches("todas%s+%]F%s+%[F", bars[#bars])
-      -- Como o `q`, só na janela em que o olho termina.
-      assert.is_not.matches("não vista", bars[1])
+      local keys = help.keys()
+      assert.matches("^Ir para a próxima mudança", keys["]c"])
+      assert.matches("^Ir para a mudança anterior", keys["[c"])
+      assert.matches("próxima não vista", keys["]f"])
+      assert.matches("não vista anterior", keys["[f"])
+      assert.matches("próximo arquivo", keys["]F"])
+      assert.matches("arquivo anterior", keys["[F"])
     end)
   end)
 

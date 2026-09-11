@@ -11,8 +11,10 @@ local M = {}
 ---@type { mode: string, run: fun() }[]
 local global_keys = {}
 
----Map the keys that annotate, in every buffer: in normal mode on the line of the
----cursor, in visual mode on the run of lines selected.
+---Map the global keys of the review, in every buffer: the ones that annotate —
+---in normal mode on the line of the cursor, in visual mode on the run of lines
+---selected — and the one that marks what is being read as seen and opens the
+---next one still to read.
 ---
 ---From the options, and at the moment they are set: the winbar of the diff
 ---writes these same keys, and a mapping read from anywhere before the options
@@ -30,20 +32,27 @@ local function map_global_keys(mappings)
 
   local function annotate() M.annotate() end
   local function annotate_long() M.annotate { long = true } end
+  local function seen_and_next() M.seen_and_next() end
   for _, key in ipairs {
     { mode = "n", lhs = mappings.annotate_line, run = annotate, desc = "Anotar a linha" },
     { mode = "n", lhs = mappings.annotate_line_long, run = annotate_long, desc = "Anotar a linha em várias linhas" },
     { mode = "x", lhs = mappings.annotate_line, run = annotate, desc = "Anotar o trecho" },
     { mode = "x", lhs = mappings.annotate_line_long, run = annotate_long, desc = "Anotar o trecho em várias linhas" },
+    {
+      mode = "n",
+      lhs = mappings.seen_and_open_next,
+      run = seen_and_next,
+      desc = "Marcar como visto e abrir a próxima não vista",
+    },
   } do
     vim.keymap.set(key.mode, key.lhs, key.run, { desc = key.desc })
     global_keys[#global_keys + 1] = { mode = key.mode, run = key.run }
   end
 end
 
----Override the panel's options, and map from them the global keys that
----annotate. The panel opens without it, with the defaults; the keys that
----annotate from inside a file are only there once it has run.
+---Override the panel's options, and map from them the global keys of the
+---review. The panel opens without it, with the defaults; the keys that work
+---from inside a file are only there once it has run.
 ---@param opts table|nil see `ReviewConfig`
 ---@return ReviewConfig
 function M.setup(opts)

@@ -128,16 +128,17 @@ Valem em qualquer buffer.
 As duas de anotação só valem dentro de um arquivo do repositório — não no
 painel, não num lado do diff que é uma versão, não num buffer sem arquivo atrás.
 Nos outros casos elas avisam em vez de anotar. No diff de unstaged o lado da
-direita é o próprio arquivo, e ali elas valem — por isso a winbar dele as
-escreve.
+direita é o próprio arquivo, e ali elas valem — por isso a ajuda dele (`g?`) as
+lista.
 
 Selecione linhas (`V`) e aperte `<Leader>ga`: a anotação fica presa ao trecho
 inteiro, a entrada diz `a.txt:2-4`, e o relatório cita todas as linhas dele. Um
 trecho de uma linha só é a anotação daquela linha.
 
-As duas teclas de anotar saem das opções do painel (`mappings.annotate_line` e
-`mappings.annotate_line_long`, em `lua/polish.lua`), e é o `setup` que as
-mapeia: por isso a winbar do diff escreve sempre a tecla que está valendo.
+As teclas de anotar e o `<Leader>gv` saem das opções do painel
+(`mappings.annotate_line`, `mappings.annotate_line_long` e
+`mappings.seen_and_open_next`, em `lua/polish.lua`), e é o `setup` que as
+mapeia: por isso a ajuda do diff lista sempre a tecla que está valendo.
 
 ### Teclas do painel
 
@@ -166,6 +167,7 @@ Locais ao buffer do painel, e sempre sobre a linha onde o cursor está.
 | `X` | Descarta a mudança, perguntando antes (`Sim` / `Não`) |
 | `y` | Copia o caminho a partir da raiz do projeto do arquivo |
 | `Y` | Copia o caminho absoluto |
+| `g?` | Mostra todas as teclas do painel, com o que cada uma faz (`q` fecha) |
 | `r` | Relê o git e redesenha |
 | `q` | Fecha o painel |
 
@@ -234,6 +236,17 @@ mudança e as três versões de um conflito —, e escritas na winbar da janela 
 à direita. Elas devolvem ao buffer o que ele tinha nessas teclas quando o diff
 sai da tela.
 
+A winbar escreve só duas: `fechar q` e `ajuda g?`. As outras estão na ajuda, a
+uma tecla — `g?` abre uma janela com todas as teclas do diff, inclusive as
+globais que valem nele, e `q` a fecha. Uma winbar maior que a janela perde o que
+fica entre o nome do lado e o fim, e com todas as teclas escritas o que se perdia
+eram as teclas — às vezes todas, sobrando só o nome do lado.
+
+A barra do AstroNvim (heirline) escreve a winbar dela a cada vez que um buffer
+de arquivo entra numa janela ou tem o filetype definido, e o lado do working
+tree é o seu arquivo. Enquanto o diff está aberto, ele escreve a dele de volta
+logo depois; fechado o diff, a do heirline volta a valer.
+
 | Tecla | O que faz |
 | --- | --- |
 | `]c` / `[c` | Vai para a próxima mudança de dentro do arquivo e para a anterior |
@@ -242,15 +255,15 @@ sai da tela.
 | `go` | Abre o arquivo no disco no ponto que está sendo lido |
 | `<C-o>` | (já no arquivo) traz o diff de volta, quando o pulo sairia dele |
 | `q` | Fecha o diff e volta ao painel |
-| `<Leader>ga` / `<Leader>gA` | Anota a linha, ou as linhas selecionadas (as teclas globais, só nomeadas aqui) |
+| `<Leader>ga` / `<Leader>gA` | Anota a linha, ou o trecho (as teclas globais, listadas na ajuda) |
+| `<Leader>gv` | Marca como visto e abre a próxima não vista (a tecla global, listada na ajuda) |
+| `g?` | Mostra todas as teclas do diff, com o que cada uma faz (`q` fecha) |
 
-A winbar escreve `anotar  <Leader>ga <Leader>gA` no fim, e só quando o lado da
-direita é o arquivo do revisor — o diff de unstaged. No de staged os dois lados
-são versões (`HEAD` e índice), assim como as três de um conflito, e ali a
-anotação seria recusada: para anotar, `go` leva ao arquivo. As teclas de anotar
-não são do diff, e ele não as mapeia nem as tira ao sair: são as globais. O fim
-é o lugar delas porque uma winbar maior que a janela perde o meio e guarda o
-fim.
+A ajuda lista `<Leader>ga` e `<Leader>gA` só quando o lado da direita é o
+arquivo do revisor — o diff de unstaged. No de staged os dois lados são versões
+(`HEAD` e índice), assim como as três de um conflito, e ali a anotação seria
+recusada: para anotar, `go` leva ao arquivo. As teclas globais não são do diff,
+e ele não as mapeia nem as tira ao sair.
 
 As quatro andam pela lista sem voltar a ela: movem o cursor do painel, abrem o
 diff da entrada e deixam o foco no diff, que é onde o revisor está. A ordem é a
@@ -586,7 +599,10 @@ atualização do ADR-0009.
    do diffview; `o` e `O` abrem o arquivo em si. O painel abre com o preview
    ligado: desça a lista e o diff da linha sob o cursor vai sendo desenhado ao
    lado, com o foco na lista; `p` desliga e deixa na tela o diff que estava lá,
-   e `p` de novo liga desenhando logo o da linha do cursor.
+   e `p` de novo liga desenhando logo o da linha do cursor. `g?` na lista e
+   dentro do diff abre a janela com todas as teclas de onde se está; `q` fecha e
+   devolve o cursor. A winbar do diff escreve só `fechar q` e `ajuda g?`, e
+   continua inteira num diff estreito.
 3. **Conflito** — num repositório com merge conflitado, as três teclas na linha
    do conflito: `<CR>` (merge tool), `d` (com a versão base) e `D` (as três
    versões ao lado do painel, sem trocar de aba). Depois de `D`, `<CR>` em outra
@@ -630,8 +646,8 @@ atualização do ADR-0009.
    Anotar o mesmo ponto de novo abre a entrada já preenchida e edita a anotação
    que está lá; apagar o texto todo remove a anotação. `A` e `<Leader>gA` abrem
    a entrada de várias linhas. No arquivo, `V` e `2j` e `<Leader>ga`: a entrada
-   diz `:N-M`, e o modo visual já saiu. Com `<CR>` num arquivo unstaged, a
-   winbar do diff termina em `anotar  <Leader>ga <Leader>gA`; num staged, não.
+   diz `:N-M`, e o modo visual já saiu. Com `<CR>` num arquivo unstaged, `g?`
+   no diff lista `<Leader>ga`; num staged, não.
 10. **Relatório** — `R`. A notificação diz que ele foi copiado e onde foi
    gravado; a quickfix abre com os pontos, e o cursor fica no painel. Cole
    (`<C-S-v>` no terminal, ou `p` no editor): é o `.md` inteiro, com as anotações

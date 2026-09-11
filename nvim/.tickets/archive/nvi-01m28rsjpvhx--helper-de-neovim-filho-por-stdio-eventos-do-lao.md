@@ -1,27 +1,28 @@
 ---
 id: nvi-01m28rsjpvhx
 title: 'Helper de Neovim filho por stdio: eventos do laço com tecla de verdade'
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T17:38:38.427222444Z'
-updated: '2026-09-11T17:38:38.427222444Z'
+updated: '2026-09-11T18:25:24.987817791Z'
+closed: '2026-09-11T18:25:24.987817791Z'
 assignee: grisotto
 tags:
 - testing
 - review
 acceptance:
 - title: child.lua sobe o filho com o minimal_init, manda teclas por nvim_input, lê o estado e o encerra
-  done: false
+  done: true
 - title: O preview segue o cursor da lista por tecla no filho, sem disparar CursorMoved à mão, em ao menos um teste
-  done: false
+  done: true
 - title: A largura adotada do painel vem de WinResized disparado por tecla no filho, em ao menos um teste
-  done: false
+  done: true
 - title: 'testing.md atualizado: os eventos do laço saem do que fica sem teste'
-  done: false
+  done: true
 - title: make format, make lint sem avisos e make test verdes
-  done: false
+  done: true
 ---
 
 ## Description

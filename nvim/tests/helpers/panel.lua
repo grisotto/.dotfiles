@@ -279,11 +279,12 @@ end
 
 ---Tell the editor that the cursor of the panel moved.
 ---
----A headless editor never fires `CursorMoved` on its own: the event belongs to
----the main loop waiting for a key, and a headless editor never gets there — the
----same reason `WinResized` is fired by hand. It is fired on the panel's buffer
----and not on the current one, so that a test can also fire it from outside the
----panel, which is where the preview must not draw anything.
+---The editor of the suite never fires `CursorMoved` on its own: the event
+---belongs to the main loop waiting for a key, and the specs never get there. A
+---test about the key firing it runs in a child editor (`tests/helpers/child.lua`).
+---It is fired on the panel's buffer and not on the current one, so that a test
+---can also fire it from outside the panel, which is where the preview must not
+---draw anything.
 function M.cursor_moved()
   local win = assert(M.win(), "the review panel is not open")
   vim.api.nvim_exec_autocmds("CursorMoved", { buffer = vim.api.nvim_win_get_buf(win) })

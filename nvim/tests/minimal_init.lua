@@ -14,7 +14,14 @@
 
 local this_file = debug.getinfo(1, "S").source:sub(2)
 local config_root = vim.fn.fnamemodify(this_file, ":p:h:h")
-local lazy = vim.fn.stdpath "data" .. "/lazy"
+-- Where the plugins are is decided once, by the editor the suite starts in, and
+-- left in the environment for the editors started from it: the one per spec
+-- file, and the child a test starts (`tests/helpers/child.lua`). A child
+-- inherits the environment of that test, and a test that moved the data
+-- directory (`fixture.data_dir`) would send it looking for the plugins under an
+-- empty one.
+vim.env.REVIEW_SUITE_PLUGINS = vim.env.REVIEW_SUITE_PLUGINS or vim.fn.stdpath "data" .. "/lazy"
+local lazy = vim.env.REVIEW_SUITE_PLUGINS
 
 local plugins = {}
 for _, name in ipairs { "plenary.nvim", "astrocore", "mini.icons" } do

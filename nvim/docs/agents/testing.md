@@ -292,6 +292,13 @@ parecem — os números da linha já vista com o caminho dela, o que a mudança 
 com o que ela tira —, e o grupo de destaque de um trecho continua lido das
 marcas (`panel.highlights`).
 
+Os eventos do laço principal (`nvi-01m28rsjpvhx`) não trouxeram item novo: o que
+se lê no editor filho é o que se lê no editor da suíte — o diff ao lado da lista
+(terceiro item) e a largura do painel na tela (primeiro) —, pelos mesmos
+helpers, rodando dentro dele (`child.require`). O que muda é quem dispara o
+evento: a tecla, lida pelo filho no laço principal como a do revisor, e não o
+teste.
+
 Nunca sobre estruturas internas do plugin. Testar a tradução do
 `git status --porcelain=v2` como função isolada foi rejeitado: ela só importa
 através do que aparece no painel; vale o mesmo para a do `git diff-tree --raw`,
@@ -335,10 +342,42 @@ para o painel (`panel.feed`). Onde o cursor ficou depois de uma tecla é lido po
 `panel.cursor` (a linha) e `panel.current` (o que está escrito nela), que é como
 se afirma sobre a tecla que marca e desce para a próxima não vista.
 
-`panel.move` é a tecla que anda pela lista mais o `CursorMoved` que um editor
-headless não dispara, que é o gesto que o preview segue; `panel.cursor_moved`
+`panel.move` é a tecla que anda pela lista mais o `CursorMoved` que o editor da
+suíte não dispara, que é o gesto que o preview segue; `panel.cursor_moved`
 dispara só o evento, no buffer do painel, para o teste que precisa dele com o
-revisor em outra janela.
+revisor em outra janela — é assim que a guarda de só desenhar com o painel
+focado é lida, de dentro do diff, movendo o cursor da lista como as teclas do
+laço o movem. Que a tecla de verdade dispara o evento sozinha, e que o preview
+a segue, é lido num editor filho (`tests/helpers/child.lua`, abaixo).
+
+`tests/helpers/child.lua` sobe um Neovim filho com o mesmo `minimal_init`
+(`child.start()`, e `child.stop()` num `after_each`) e fala com ele por stdin e
+stdout, sem socket. Ele existe para os eventos que só o laço principal dispara
+— o `CursorMoved` depois de uma tecla que moveu o cursor, o `WinResized` depois
+de uma tecla que redimensionou uma janela —: o editor da suíte nunca volta ao
+laço esperando tecla, e o filho está lá. `child.input` manda teclas pelo buffer
+de entrada dele (`nvim_input`), como o revisor as digita; `child.lua` roda Lua
+nele e devolve o resultado; `child.require "tests.helpers.panel"` devolve o
+helper rodando dentro do filho, que é como o filho é lido do mesmo jeito que o
+editor da suíte; e `child.wait(condição, ms)` espera pelo que apareceu nele,
+perguntando de novo a cada giro do laço — nunca de dentro do callback do
+`vim.wait`, onde um pedido a outro editor já falhou e já travou (§2.3 de
+`docs/research/rodar-o-neovim-como-agente.md`).
+
+Quatro cuidados. Um `<` literal é `<LT>`: solto, ele deixa o filho esperando o
+resto da tecla. Antes de todo pedido o helper pergunta ao filho se ele está
+esperando tecla (`nvim_get_mode().blocking`), porque um pedido feito nessa hora
+nunca é respondido: ele espera o `'timeoutlen'` de uma tecla ambígua passar e
+falha, em vez de travar a suíte. O filho herda o ambiente do teste — o diretório
+de dados do fixture incluído — e recebe dele o de configuração, que o
+`minimal_init` do filho tinha trocado; onde estão os plugins o `minimal_init`
+decide uma vez só e deixa no ambiente (`REVIEW_SUITE_PLUGINS`), porque debaixo
+do diretório de dados do fixture não há plugin nenhum. E o `PATH` é o do momento
+em que o filho sobe: um `fixture.trace_git` chamado depois não chega a ele.
+
+Um teste no filho custa um editor a mais, então ele fica para o que só o laço
+mostra: o preview seguindo a tecla que anda pela lista (`preview_spec`) e a
+largura que o painel toma como dele (`panel_spec`).
 
 O clique de mouse é mandado em duas metades (`panel.click`, `panel.click_section`
 e `panel.click_here`): um editor headless não tem tela para apontar, então pôr o
@@ -536,34 +575,22 @@ que os testes afirmam sobre ela é o contrário: que o painel *não* monta diff
 nosso nenhum quando a tecla é de uma apresentação do diffview — nem no conflito,
 nem fora dele — e que ela não estoura quando o diffview não está no runtimepath.
 
-O `WinResized` do editor, que é o que faz o painel tomar como dele a largura
-que o revisor lhe deu com ele focado. O editor só o dispara no laço principal,
-esperando uma tecla, e um editor headless nunca chega lá: nem redimensionar por
-API, nem mandar as teclas de redimensionar o produzem. O teste da largura
-adotada faz o gesto do revisor (`<C-w>15<` no painel) e dispara o evento à mão
-com `doautocmd`; o que ele afirma é a largura que fica na tela depois de um
-acidente de layout, como os outros testes de largura. O ramo que devolve a
-largura ao painel é disparado por um `WinClosed`, que é evento comum e chega
-sozinho.
+O `VimResized` que separa o terminal redimensionado do revisor alargando o
+painel. O editor o dispara quando a tela dele muda de tamanho — `'lines'` ou
+`'columns'` —, e as teclas que o filho recebe não mudam nenhum dos dois. A
+pesquisa aponta para uma interface presa ao filho que mude de tamanho
+(`nvim_ui_try_resize`), que o filho da suíte não tem, mas não chegou a testá-la
+(§5.1 de `docs/research/rodar-o-neovim-como-agente.md`: não confirmado). O que
+se verifica à mão é
+encolher o terminal com o cursor dentro do painel e alargá-lo de volta: a lista
+tem que voltar à largura que tinha, e não ficar com a que coube no terminal
+menor.
 
-Pela mesma razão fica sem teste o `VimResized` que separa o terminal
-redimensionado do revisor alargando o painel: os dois eventos são do laço
-principal, e um terminal que muda de tamanho não existe num editor headless. O
-que se verifica à mão é encolher o terminal com o cursor dentro do painel e
-alargá-lo de volta: a lista tem que voltar à largura que tinha, e não ficar com
-a que coube no terminal menor.
-
-E pela mesma razão o `CursorMoved`, que é o que faz o preview seguir o cursor da
-lista: ele é do laço principal esperando uma tecla, e um editor headless nunca
-chega lá — nem a tecla que desce a lista nem `nvim_win_set_cursor` o produzem.
-O teste faz o gesto do revisor e dispara o evento à mão (`panel.move`), como o
-teste da largura adotada dispara o `WinResized`. Ele é disparado no buffer do
-painel e não na janela atual, que é o que também permite dispará-lo de fora do
-painel: é assim que a guarda de só desenhar com o painel focado é lida — de
-dentro do diff, movendo o cursor da lista como as teclas do laço o movem. O que
-se verifica à mão, num editor dentro de um terminal: com o preview ligado, parar
-numa linha desenha o diff dela, e segurar o `j` até lá embaixo desenha um só, o
-do arquivo em que o cursor parou.
+Segurar o `j` até lá embaixo com o preview ligado, que é tecla repetida pelo
+terminal. A regra que ela exercita — desenhar um só diff, o do arquivo em que o
+cursor parou — é lida no editor da suíte, com o evento disparado à mão depois de
+cada tecla (`panel.move`); o que se verifica à mão, num editor dentro de um
+terminal, é que a repetição de verdade chega à mesma tela.
 
 O décimo terceiro entrou com o `<Space>` (`nvi-01m1kh78jhtb`), e é o item que
 descreve o que a suíte já lia sem estar escrito aqui: a descrição de cada tecla

@@ -1,3 +1,4 @@
+local child = require "tests.helpers.child"
 local editor = require "tests.helpers.editor"
 local fixture = require "tests.helpers.fixture"
 local panel = require "tests.helpers.panel"
@@ -47,6 +48,7 @@ describe("painel de revisão", function()
   before_each(function() review.setup {} end)
 
   after_each(function()
+    child.stop()
     review.close()
     reset_tabs()
     fixture.cleanup()
@@ -536,24 +538,45 @@ describe("painel de revisão", function()
       -- Alargar o painel com ele focado é gesto do revisor: é essa largura que
       -- volta depois de um acidente de layout, e não a configurada.
       --
-      -- O `WinResized` é disparado à mão: o editor só o dispara no laço
-      -- principal, esperando uma tecla, e um editor headless nunca chega lá —
-      -- nem redimensionando por API, nem pelas teclas de redimensionar. O gesto
-      -- é o do revisor; o que se afirma é a largura que fica na tela depois.
+      -- As teclas vão a um editor filho, que as lê esperando no laço principal
+      -- como lê as do revisor: é lá que o `WinResized` que toma a largura como
+      -- do painel dispara sozinho, e não à mão. O que se afirma é a largura que
+      -- fica na tela depois do acidente.
       local repo = fixture.repo()
-      local content = open_beside_a_file(repo)
+      repo:commit_file("a.txt", "v1\n")
+      repo:write("a.txt", "v2\n")
+      child.start()
+      local child_panel = child.require "tests.helpers.panel"
 
-      panel.feed "<C-w>15<"
-      vim.cmd "doautocmd WinResized"
-      assert.equals(25, panel.width())
+      child.lua(
+        [[
+          require("review").setup {}
+          vim.fn.chdir(...)
+          require("review").open()
+        ]],
+        repo.root
+      )
+      child_panel.focus("Unstaged", "a%.txt")
+      child_panel.feed "o"
+      local content = child.lua "return vim.api.nvim_get_current_win()"
 
-      vim.api.nvim_set_current_win(content)
-      local split = split_below(content)
-      vim.api.nvim_win_set_width(content, vim.o.columns - 10)
-      vim.api.nvim_win_close(split, true)
+      child.lua("vim.api.nvim_set_current_win(...)", child_panel.win())
+      child.input "<C-w>15<LT>"
+      assert.equals(25, child_panel.width())
 
-      vim.wait(200, function() return panel.width() == 25 end)
-      assert.equals(25, panel.width())
+      child.lua(
+        [[
+          local content = ...
+          vim.api.nvim_set_current_win(content)
+          local split = vim.api.nvim_open_win(vim.api.nvim_win_get_buf(content), false, { split = "below", win = content })
+          vim.api.nvim_win_set_width(content, vim.o.columns - 10)
+          vim.api.nvim_win_close(split, true)
+        ]],
+        content
+      )
+
+      child.wait(function() return child_panel.width() == 25 end, 1000)
+      assert.equals(25, child_panel.width())
     end)
   end)
 

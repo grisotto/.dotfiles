@@ -1,3 +1,4 @@
+local child = require "tests.helpers.child"
 local diff = require "tests.helpers.diff"
 local fixture = require "tests.helpers.fixture"
 local menu = require "tests.helpers.menu"
@@ -27,9 +28,10 @@ local function open_in(dir)
 end
 
 ---The file the diff beside the panel is of, or nil when there is no diff there.
+---@param reader? table the diff helper to read it with: this editor's, or a child's
 ---@return string|nil
-local function drawn()
-  local names = diff.names()
+local function drawn(reader)
+  local names = (reader or diff).names()
   if #names == 0 then return nil end
   -- Short of the directories and of the rev a side that came from git carries
   -- at the end of its name: what is left is the file the preview is of.
@@ -42,6 +44,16 @@ end
 local function previewing(path)
   vim.wait(DRAWING_MS, function() return drawn() == path end, 10)
   return drawn()
+end
+
+---What the preview drew in a child editor, once it has drawn it. Waited for by
+---asking the child again and again, and not from inside `vim.wait`.
+---@param child_diff table the diff helper of the child
+---@param path string the file it is expected to be showing
+---@return string|nil what it is showing
+local function previewing_in_child(child_diff, path)
+  child.wait(function() return drawn(child_diff) == path end, DRAWING_MS)
+  return drawn(child_diff)
 end
 
 ---What is beside the panel after the preview has had time to draw, which is how
@@ -91,6 +103,7 @@ describe("o preview", function()
   end)
 
   after_each(function()
+    child.stop()
     review.close()
     -- Back to the first tabpage before dropping the others: `tabonly!` keeps
     -- the current one, and keeping a tabpage of the test would carry its panel
@@ -188,19 +201,33 @@ describe("o preview", function()
   end)
 
   describe("com o preview ligado", function()
-    it("mover o cursor desenha o diff da entrada, sem tirar o foco da lista", function()
+    it("a tecla que anda pela lista desenha o diff da entrada, sem tirar o foco da lista", function()
+      -- As teclas vão a um editor filho, que as lê esperando no laço principal
+      -- como lê as do revisor: é lá que o `CursorMoved` que o preview segue
+      -- dispara sozinho, e não à mão.
       local repo = repo_with_three_changes()
+      child.start()
+      local child_panel = child.require "tests.helpers.panel"
+      local child_diff = child.require "tests.helpers.diff"
 
-      open_in(repo.root)
-      panel.focus("Unstaged", "a%.txt")
-      panel.feed "p"
-      assert.equals("a.txt", previewing "a.txt")
+      child.lua(
+        [[
+          require("review").setup {}
+          vim.cmd.tcd(vim.fn.fnameescape(...))
+          require("review").open()
+          vim.api.nvim_set_current_win(require("tests.helpers.panel").win())
+        ]],
+        repo.root
+      )
+      child_panel.focus("Unstaged", "a%.txt")
+      child.input "p"
+      assert.equals("a.txt", previewing_in_child(child_diff, "a.txt"))
 
-      panel.move "j"
+      child.input "j"
 
-      assert.equals("b.txt", previewing "b.txt")
-      assert.equals(panel.win(), vim.api.nvim_get_current_win())
-      assert.is_false(diff.focused())
+      assert.equals("b.txt", previewing_in_child(child_diff, "b.txt"))
+      assert.equals(child_panel.win(), child.lua "return vim.api.nvim_get_current_win()")
+      assert.is_false(child_diff.focused())
     end)
 
     it("desenha as duas versões que a linha compara, como a tecla de abrir", function()

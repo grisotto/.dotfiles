@@ -141,6 +141,23 @@ return {
         -- grupo aparece sem nome.
         ["gm"] = { desc = "Multiple Cursors" },
 
+        -- `<C-Up>`/`<C-Down>` não aparecem aqui de propósito, e o
+        -- `:checkhealth astrocore` avisa de uma colisão nelas que não é nossa:
+        -- o astrocommunity escreve `<C-up>` (cursor múltiplo) e o smart-splits
+        -- do AstroNvim escreve `<C-Up>` (redimensionar split) na mesma tabela.
+        -- Quem ganha é o cursor múltiplo, porque o Visual-Multi reescreve as
+        -- duas teclas para os `<Plug>` dele ao carregar — e é esse o
+        -- comportamento que se quer aqui; redimensionar continua em
+        -- `<C-Left>`/`<C-Right>`.
+        --
+        -- Não dá para calar o aviso daqui. Tirar uma das grafias da tabela
+        -- exige `= false` na grafia do outro, e aí passam a existir duas
+        -- grafias nossas da mesma tecla: o `normalize_mappings` do AstroCore
+        -- junta as duas percorrendo a tabela enquanto a altera, e qual
+        -- sobrevive muda de uma partida para outra — medido, seis partidas,
+        -- resultado diferente entre elas. O conserto é no astrocommunity,
+        -- trocando `<C-up>` por `<C-Up>`.
+
         -- Toggle last open buffer
         ["<Leader><Tab>"] = { "<cmd>b#<cr>", desc = "Previous tab" },
         -- navigate buffer tabs

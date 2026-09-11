@@ -492,6 +492,39 @@ Uma anotação se prende a um ponto: o arquivo, o modo, e a linha quando houver.
 Dois textos escritos no mesmo ponto são um só, corrigido — anotar de novo abre a
 entrada já preenchida, e apagar o texto todo remove a anotação.
 
+Toda anotação tem um tipo, que diz ao agente o que você está pedindo com ela. Ao
+anotar — uma linha, um trecho ou o arquivo, na entrada curta ou na longa — o
+tipo é escolhido num seletor do editor antes do texto, com a instrução de cada
+um ao lado. `<CR>` escolhe o primeiro: `issue` numa anotação nova, e o tipo que
+ela já tem numa anotação que está sendo editada. Desistir do seletor é desistir
+da anotação, como desistir da entrada. A entrada diz o tipo e o ponto
+(`issue em a.clj:42-44`).
+
+| Tipo | O que pede ao agente |
+| --- | --- |
+| `issue` | Corrigir o problema apontado |
+| `refactor` | Refatorar sem mudar o comportamento |
+| `test` | Criar ou ajustar o teste |
+| `revert` | Desfazer a mudança naquele trecho |
+| `question` | Responder, sem tocar no código |
+| `suggestion` | Avaliar e aplicar, ou recusar dizendo o motivo |
+| `nitpick` | Fazer um ajuste trivial |
+| `praise` | Manter como está, também ao refazer o resto |
+
+Os nomes são os do Conventional Comments. `annotation_types`, em
+`lua/polish.lua`, acrescenta tipos ao fim da lista e troca a instrução de um que
+já existe; o nome é uma palavra, e a instrução é o que o preâmbulo do relatório
+diz ao agente:
+
+```lua
+annotation_types = {
+  { name = "security", instruction = "trate como falha de segurança." }, -- novo
+  { name = "question", instruction = "responda aqui, sem tocar no código." }, -- troca
+},
+```
+
+Uma anotação gravada antes de haver tipo conta como `issue`.
+
 Cada anotação de linha guarda o número da linha e também o texto dela, a âncora
 (ADR-0003). Na geração do relatório, se o texto não bate mais, a âncora é
 procurada no arquivo e a anotação é reancorada na linha em que está agora; se não
@@ -571,14 +604,14 @@ O documento tem três partes, e nenhuma data:
 - o preâmbulo: que é a revisão humana da mudança dele, o que cada tipo usado
   pede, que não altere nada além do pedido, que localize cada trecho pelo código
   citado, que não faça commit e que responda uma linha por id com `feito`,
-  `respondido` ou `recusado: motivo`. A regra do trecho não encontrado só aparece
-  quando algum item é assim;
+  `respondido` ou `recusado: motivo`. Só os tipos que aparecem nos itens são
+  explicados, com a instrução da configuração e na ordem dela. A regra do trecho
+  não encontrado só aparece quando algum item é assim;
 - os itens, numa lista só, ordenada por arquivo e por linha, com a anotação de
-  arquivo antes das de linha. Cada um tem `id`, tipo, arquivo, linhas, o código
-  citado exatamente como está e o texto. A anotação de arquivo inteiro vai sem
-  linhas e sem código.
-
-Por enquanto toda anotação sai como `issue`.
+  arquivo antes das de linha. Cada um tem `id`, o tipo escolhido no seletor
+  (veja [Anotações e reancoragem](#anotações-e-reancoragem)), arquivo, linhas, o
+  código citado exatamente como está e o texto. A anotação de arquivo inteiro vai
+  sem linhas e sem código.
 
 ```xml
 <code_review root="/home/eu/projeto" branch="main" reference="HEAD 4f1c…">
@@ -737,15 +770,22 @@ atualização do ADR-0009.
    transferência. Num monorepo, `y` sai relativo ao módulo do arquivo (o
    servidor de linguagem tem que estar de pé nele).
 9. **Anotar** — `a` no painel anota o arquivo; `o` e depois `<Leader>ga` numa
-   linha anota a linha. A contagem aparece na linha do painel (`M  a.txt  ✎ 2`).
-   Anotar o mesmo ponto de novo abre a entrada já preenchida e edita a anotação
-   que está lá; apagar o texto todo remove a anotação. `A` e `<Leader>gA` abrem
-   a entrada de várias linhas. No arquivo, `V` e `2j` e `<Leader>ga`: a entrada
-   diz `:N-M`, e o modo visual já saiu. Com `<CR>` num arquivo unstaged, `g?`
-   no diff lista `<Leader>ga`; num staged, não.
+   linha anota a linha. Antes do texto vem o seletor de tipo, com `issue`
+   primeiro e a instrução de cada tipo ao lado; escolha `question` e a entrada
+   diz `question em a.txt:N`. `<Esc>` no seletor desiste sem pedir texto. A
+   contagem aparece na linha do painel (`M  a.txt  ✎ 2`).
+   Anotar o mesmo ponto de novo traz o tipo dela primeiro no seletor e abre a
+   entrada já preenchida; escolher outro tipo troca o tipo, e apagar o texto
+   todo remove a anotação. `A` e `<Leader>gA` passam pelo mesmo seletor e abrem
+   a entrada de várias linhas, com o tipo na borda. No arquivo, `V` e `2j` e
+   `<Leader>ga`: a entrada diz `:N-M`, e o modo visual já saiu. Com `<CR>` num
+   arquivo unstaged, `g?` no diff lista `<Leader>ga`; num staged, não. Com um
+   `annotation_types` em `lua/polish.lua`, o tipo novo aparece no fim do
+   seletor, e o que troca a instrução de um existente aparece com a nova.
 10. **Relatório** — `R`. A notificação diz que ele foi copiado e onde foi
    gravado (`….xml`); a quickfix abre com os pontos, cada um começando com
-   `#<id> issue`, e o cursor fica no painel. Cole (`<C-S-v>` no terminal, ou `p`
+   `#<id> <tipo>`, e o cursor fica no painel. O preâmbulo explica só os tipos
+   que aparecem nos itens. Cole (`<C-S-v>` no terminal, ou `p`
    no editor): é o `.xml` inteiro — `<code_review>` com a raiz absoluta, a branch
    e `HEAD <sha>`, sem data; o preâmbulo em `<instructions>`; e um `<comment>` por
    anotação com `id`, `type`, `file`, `lines`, o código citado em `<code>` e o

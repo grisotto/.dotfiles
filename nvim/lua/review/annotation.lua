@@ -16,6 +16,12 @@
 ---same idea applied to the diff). Both are the editor's own: the short one is
 ---`vim.ui.input`, so it arrives wherever the reviewer already answers
 ---questions, and the long one is a window with a scratch buffer in it.
+---
+---Before either of them comes the type of the annotation — what the reviewer
+---asks the agent for with it —, in the editor's own selection UI: deciding
+---whether a remark is a fix, a question or a "leave this as it is" is part of
+---writing it, and the report tells the agent what each type asks for.
+local config = require "review.config"
 local git = require "review.git"
 local root = require "review.root"
 local state = require "review.state"
@@ -121,14 +127,84 @@ function M.counts(repository, mode)
   return counts
 end
 
----What the entry says it is about, so a reviewer who pressed the key on the
----wrong line sees it before writing.
----@param point ReviewPoint
+---@class ReviewAnnotationType what the reviewer can ask the agent for with an annotation
+---@field name string how the report writes it, in the words of the Conventional Comments
+---@field instruction string what it asks the agent for, as the preamble says it
+
+---The type of an annotation the reviewer did not choose one for: nearly every
+---remark on an agent's change is "this is wrong".
+local DEFAULT_TYPE = "issue"
+
+---The types of the Conventional Comments, in the order the selector offers them
+---and the preamble lists them.
+---@type ReviewAnnotationType[]
+local TYPES = {
+  { name = "issue", instruction = "corrija o problema apontado." },
+  { name = "refactor", instruction = "refatore o trecho sem mudar o comportamento." },
+  { name = "test", instruction = "crie ou ajuste o teste pedido." },
+  { name = "revert", instruction = "desfaça a sua mudança neste trecho." },
+  { name = "question", instruction = "responda à pergunta sem alterar o código." },
+  { name = "suggestion", instruction = "avalie a sugestão e aplique-a, ou recuse-a dizendo o motivo." },
+  { name = "nitpick", instruction = "faça o ajuste trivial pedido." },
+  { name = "praise", instruction = "mantenha o trecho como está, também ao refazer o resto." },
+}
+
+---The types an annotation can have, in order: the built-in ones with the
+---instruction the reviewer gave to any of them, and after them the ones the
+---reviewer added (`annotation_types`).
+---@return ReviewAnnotationType[]
+function M.types()
+  local types = vim.deepcopy(TYPES)
+  for _, configured in ipairs(config.options.annotation_types) do
+    local known = vim.iter(types):find(function(kind) return kind.name == configured.name end)
+    if known then
+      known.instruction = configured.instruction
+    else
+      types[#types + 1] = { name = configured.name, instruction = configured.instruction }
+    end
+  end
+  return types
+end
+
+---The type of an annotation, or of the one about to be written where there is
+---none yet. One written before annotations had a type has none either, and it
+---is what every annotation was then.
+---@param written ReviewAnnotation|nil
 ---@return string
-local function about(point)
-  if point.end_line then return ("Anotação em %s:%d-%d"):format(point.path, point.line, point.end_line) end
-  if point.line then return ("Anotação em %s:%d"):format(point.path, point.line) end
-  return ("Anotação em %s"):format(point.path)
+function M.type_of(written) return written and written.type or DEFAULT_TYPE end
+
+---Where a point is, as the entries say it: a reviewer who pressed the key on
+---the wrong line sees it before writing.
+---@param point ReviewPoint
+---@return string e.g. "a.clj", "a.clj:42", "a.clj:42-44"
+local function where(point)
+  if point.end_line then return ("%s:%d-%d"):format(point.path, point.line, point.end_line) end
+  if point.line then return ("%s:%d"):format(point.path, point.line) end
+  return point.path
+end
+
+---Ask for the type of the annotation of a point, in the editor's own selection
+---UI. Each type is offered with what it asks the agent for, so the reviewer
+---decides what they are asking before writing it; `current` comes first, so
+---that the key that picks the first one keeps what is there.
+---@param point ReviewPoint
+---@param current string
+---@param done fun(kind: string|nil) nil when the reviewer gave it up
+local function choose_type(point, current, done)
+  local offered = {}
+  for _, kind in ipairs(M.types()) do
+    if kind.name == current then
+      table.insert(offered, 1, kind)
+    else
+      offered[#offered + 1] = kind
+    end
+  end
+  local items = vim.tbl_map(function(kind) return ("%s — %s"):format(kind.name, kind.instruction) end, offered)
+  vim.ui.select(
+    items,
+    { prompt = ("Tipo da anotação em %s"):format(where(point)) },
+    function(_, index) done(index and offered[index].name) end
+  )
 end
 
 ---The filetype of the long entry's buffer, which is also how it is found on
@@ -147,10 +223,10 @@ local ENTRY_WIDTH, ENTRY_HEIGHT = 72, 10
 ---Ask for the text in a window of its own, prefilled with what is already
 ---written. The reviewer edits it as they edit anything else, and the two keys
 ---on the border say how it ends.
----@param point ReviewPoint
+---@param about string the type and the point, e.g. "issue em a.clj:42-44"
 ---@param text string what is already written, empty for a new annotation
 ---@param done fun(written: string|nil) nil when the reviewer gave it up
-local function long_entry(point, text, done)
+local function long_entry(about, text, done)
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].bufhidden = "wipe"
@@ -168,7 +244,7 @@ local function long_entry(point, text, done)
     col = math.max(math.floor((vim.o.columns - width) / 2), 0),
     style = "minimal",
     border = "rounded",
-    title = " " .. about(point) .. " ",
+    title = " " .. about .. " ",
     footer = (" %s grava · %s cancela "):format(SAVE, CANCEL),
   })
 
@@ -213,13 +289,16 @@ end
 ---Ask for the text on one line, prefilled with what is already written. The
 ---editor's own input UI, so it is asked wherever the reviewer already reads
 ---the editor's questions.
----@param point ReviewPoint
+---@param about string the type and the point, e.g. "issue em a.clj:42-44"
 ---@param text string
 ---@param done fun(written: string|nil) nil when the reviewer gave it up
-local function one_line_entry(point, text, done) vim.ui.input({ prompt = about(point) .. ": ", default = text }, done) end
+local function one_line_entry(about, text, done) vim.ui.input({ prompt = about .. ": ", default = text }, done) end
 
----Write the annotation of a point, asking the reviewer for the text and
----editing what is already there.
+---Write the annotation of a point, asking the reviewer for the type and then
+---the text, and editing what is already there.
+---
+---Giving up either question gives the annotation up: what is already written
+---stays as it was.
 ---
 ---An annotation that does not fit on one line is edited in the long entry
 ---whichever key asked for it: prefilling a one-line box with a paragraph would
@@ -228,17 +307,20 @@ local function one_line_entry(point, text, done) vim.ui.input({ prompt = about(p
 ---@param point ReviewPoint
 ---@param opts { long: boolean|nil }|nil `long` opens the entry of several lines
 ---@param done fun() called after the annotation is written, and not when the
----reviewer gave it up; with a picker in front of `vim.ui.input` it arrives long
----after this function returns
+---reviewer gave it up; with a picker in front of `vim.ui.select` or
+---`vim.ui.input` it arrives long after this function returns
 function M.write(point, opts, done)
   local existing = state.annotation_at(point)
   local text = existing and existing.text or ""
 
-  local ask = (opts and opts.long or text:find "\n") and long_entry or one_line_entry
-  ask(point, text, function(written)
-    if not written then return end
-    state.annotate(point, vim.trim(written))
-    done()
+  choose_type(point, M.type_of(existing), function(kind)
+    if not kind then return end
+    local ask = (opts and opts.long or text:find "\n") and long_entry or one_line_entry
+    ask(("%s em %s"):format(kind, where(point)), text, function(written)
+      if not written then return end
+      state.annotate(point, vim.trim(written), kind)
+      done()
+    end)
   end)
 end
 

@@ -362,6 +362,17 @@ inteiro dela: é como o revisor escolhe numa busca cujas linhas o teste não tem
 como escrever, porque o commit é oferecido com o sha curto dentro e o sha é do
 repositório.
 
+O tipo da anotação (`nvi-01m2723wb1g7`) é pedido pela mesma UI, antes da
+entrada: o que se afirma é o que o seletor ofereceu (`confirm.offered`, cada
+linha `nome — instrução`, na ordem em que o revisor a vê) e o tipo que ficou
+gravado no documento de estado, no relatório e na quickfix. Todo spec que anota
+instala a UI e responde `confirm.answer_matching "^issue "` no `before_each` —
+o `<CR>` do revisor numa anotação nova —, e o teste que fala de outro tipo troca
+a resposta antes de anotar. Sem isso a pergunta seria cancelada, e cancelar o
+seletor desiste da anotação: um spec que esqueceu de responder não grava nada,
+em vez de gravar um tipo que ninguém escolheu. A anotação legada, sem tipo, é
+plantada no documento (`document.plant`), como a de outro modo.
+
 `tests/helpers/menu.lua` lê o menu de contexto do editor: `menu.entries()` devolve
 as entradas na ordem em que aparecem, `menu.actions()` só as que têm ação e
 atalho, na forma tecla → ação, e `menu.choose` escolhe uma pelo texto, que é o

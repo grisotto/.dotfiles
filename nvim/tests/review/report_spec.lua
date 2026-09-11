@@ -1,4 +1,5 @@
 local clipboard = require "tests.helpers.clipboard"
+local confirm = require "tests.helpers.confirm"
 local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
@@ -86,11 +87,16 @@ describe("relatório de revisão", function()
     review.setup {}
     fixture.data_dir()
     input.install()
+    -- O tipo é pedido antes do texto em toda anotação. Quem não fala dele
+    -- escolhe `issue`, que é o `<CR>` do revisor numa anotação nova.
+    confirm.install()
+    confirm.answer_matching "^issue "
     clipboard.clear()
   end)
 
   after_each(function()
     input.restore()
+    confirm.restore()
     quickfix.clear()
     editor.reset()
     vim.cmd.cd(vim.fn.fnameescape(config_root))
@@ -539,6 +545,97 @@ describe("relatório de revisão", function()
           not_found = true,
         },
       }
+    end)
+  end)
+
+  describe("tipo da anotação", function()
+    it("sai em cada item dos dois formatos e da quickfix", function()
+      local repo = repo_with_a_change()
+      repo:write("b.txt", "outro arquivo\n")
+
+      open_in(repo.root)
+      confirm.answer_matching "^question "
+      annotate_line("Unstaged", "a%.txt", 2, "por que mudou?")
+      confirm.answer_matching "^revert "
+      annotate_file("Untracked", "b%.txt", "este nem devia estar aqui")
+
+      generate_both_and_expect_items {
+        {
+          id = 1,
+          type = "question",
+          file = "a.txt",
+          lines = "2",
+          code = { "dois alterado" },
+          text = "por que mudou?",
+          not_found = false,
+        },
+        { id = 2, type = "revert", file = "b.txt", text = "este nem devia estar aqui", not_found = false },
+      }
+      assert.same({
+        { file = repo.root .. "/a.txt", lnum = 2, text = "#1 question · por que mudou?" },
+        { file = repo.root .. "/b.txt", lnum = 0, text = "#2 revert · este nem devia estar aqui" },
+      }, quickfix.items())
+    end)
+
+    it("lista no preâmbulo só as instruções dos tipos usados, na ordem da configuração", function()
+      review.setup { annotation_types = { { name = "praise", instruction = "não mexa nisto." } } }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      confirm.answer_matching "^praise "
+      annotate_line("Unstaged", "a%.txt", 1, "ficou bom")
+      confirm.answer_matching "^refactor "
+      annotate_line("Unstaged", "a%.txt", 3, "extraia isto")
+      panel.feed "R"
+      panel.feed "M"
+
+      local instructions = report.instructions "xml"
+      assert.equals(instructions, report.instructions "markdown")
+      local refactor = instructions:find("- `refactor`: refatore", 1, true)
+      local praise = instructions:find("- `praise`: não mexa nisto.", 1, true)
+      assert.is_truthy(refactor and praise and refactor < praise, instructions)
+      for _, unused in ipairs { "`issue`", "`test`", "`revert`", "`question`", "`suggestion`", "`nitpick`" } do
+        assert.is_nil(instructions:find(unused, 1, true), ("o preâmbulo fala de %s:\n%s"):format(unused, instructions))
+      end
+    end)
+
+    it("conta como issue a anotação gravada antes de haver tipo", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      confirm.answer_matching "^praise "
+      annotate_line("Unstaged", "a%.txt", 3, "ficou bom")
+      document.plant {
+        path = "a.txt",
+        mode = "worktree",
+        line = 1,
+        anchor = "um",
+        text = "gravada antes do tipo",
+        at = "2026-01-01T00:00:00Z",
+      }
+
+      generate_both_and_expect_items {
+        {
+          id = 1,
+          type = "issue",
+          file = "a.txt",
+          lines = "1",
+          code = { "um" },
+          text = "gravada antes do tipo",
+          not_found = false,
+        },
+        {
+          id = 2,
+          type = "praise",
+          file = "a.txt",
+          lines = "3",
+          code = { "três" },
+          text = "ficou bom",
+          not_found = false,
+        },
+      }
+      assert.is_truthy(report.instructions("xml"):find("- `issue`: corrija", 1, true))
+      assert.equals("#1 issue · gravada antes do tipo", quickfix.items()[1].text)
     end)
   end)
 

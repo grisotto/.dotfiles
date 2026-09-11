@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723wb1g7
 title: Tipo da anotação escolhido no seletor
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:04.281899877Z'
-updated: '2026-09-11T01:43:04.409937709Z'
+updated: '2026-09-11T12:47:37.692598582Z'
+closed: '2026-09-11T12:47:37.692598582Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,15 +15,15 @@ tags:
 - review
 acceptance:
 - title: Seletor antes do texto, com nome e instrução de cada tipo, na entrada curta e na longa
-  done: false
+  done: true
 - title: issue primeiro numa anotação nova; o tipo atual primeiro numa edição; cancelar o seletor desiste
-  done: false
+  done: true
 - title: annotation_types acrescenta tipos e troca a instrução de um existente
-  done: false
+  done: true
 - title: Tipo gravado no estado; anotação antiga sem tipo sai como issue
-  done: false
+  done: true
 - title: Relatório e quickfix mostram o tipo; o preâmbulo lista só os tipos usados
-  done: false
+  done: true
 deps:
 - nvi-01m2723w2zb5
 ---

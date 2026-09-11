@@ -70,6 +70,9 @@ describe("modo commit", function()
     -- A busca de branch é a UI de seleção do editor, a mesma por onde o
     -- descartar pergunta: aqui ela é lida e respondida como lá.
     confirm.install()
+    -- A anotação pede o tipo nessa mesma UI, antes do texto; quem não fala dele
+    -- escolhe `issue`, que é o `<CR>` do revisor numa anotação nova.
+    confirm.answer_matching "^issue "
   end)
 
   after_each(function()

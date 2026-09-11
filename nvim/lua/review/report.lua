@@ -192,16 +192,6 @@ local function reads_before(a, b)
   return a.annotation.text < b.annotation.text
 end
 
----What every annotation is until the type of an annotation arrives: the default
----of the Conventional Comments this report takes its names from.
-local DEFAULT_TYPE = "issue"
-
----What each type asks the agent for, in the order the preamble lists them.
----@type { name: string, instruction: string }[]
-local TYPES = {
-  { name = "issue", instruction = "corrija o problema apontado." },
-}
-
 ---The items of a report, in the order it is read in.
 ---@param placements ReviewPlacement[] already sorted
 ---@return ReviewReportItem[]
@@ -209,7 +199,13 @@ local function items_of(placements)
   local items = {}
   for id, placement in ipairs(placements) do
     local written = placement.annotation
-    local item = { id = id, type = DEFAULT_TYPE, file = written.path, text = written.text, found = true }
+    local item = {
+      id = id,
+      type = annotation.type_of(written),
+      file = written.path,
+      text = written.text,
+      found = true,
+    }
     if placement.displaced then
       item.found = false
       item.code = written.anchor and anchor_lines(written)
@@ -278,14 +274,15 @@ O que cada tipo pede:
   `recusado: motivo`.]]
 
 ---@param items ReviewReportItem[]
----@return string the instruction of each type used, one per line
+---@return string the instruction of each type used, one per line, in the
+---order of the types
 local function types_used(items)
   local used = {}
   for _, item in ipairs(items) do
     used[item.type] = true
   end
   local lines = {}
-  for _, kind in ipairs(TYPES) do
+  for _, kind in ipairs(annotation.types()) do
     if used[kind.name] then lines[#lines + 1] = ("- `%s`: %s"):format(kind.name, kind.instruction) end
   end
   return table.concat(lines, "\n")

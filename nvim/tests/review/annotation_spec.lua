@@ -1,3 +1,4 @@
+local confirm = require "tests.helpers.confirm"
 local diff = require "tests.helpers.diff"
 local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
@@ -56,10 +57,15 @@ describe("anotação", function()
     review.setup {}
     fixture.data_dir()
     input.install()
+    -- O tipo é pedido antes do texto em toda anotação. Quem não fala dele
+    -- escolhe `issue`, que é o `<CR>` do revisor numa anotação nova.
+    confirm.install()
+    confirm.answer_matching "^issue "
   end)
 
   after_each(function()
     input.restore()
+    confirm.restore()
     editor.reset()
     vim.cmd.cd(vim.fn.fnameescape(config_root))
     fixture.cleanup()
@@ -253,7 +259,7 @@ describe("anotação", function()
       annotate_selection(1, 3, { long = true })
 
       assert.is_true(entry.is_open())
-      assert.equals("Anotação em a.txt:1-3", entry.title())
+      assert.equals("issue em a.txt:1-3", entry.title())
       entry.type "três linhas\nde uma vez"
       entry.save()
 
@@ -344,7 +350,7 @@ describe("anotação", function()
       assert.same({}, input.prompts())
       -- A entrada diz em que ponto está, como a de uma linha diz: quem apertou
       -- a tecla na linha errada vê isso antes de escrever.
-      assert.equals("Anotação em a.txt:2", entry.title())
+      assert.equals("issue em a.txt:2", entry.title())
       entry.type "primeira linha\nsegunda linha"
       entry.save()
 
@@ -443,7 +449,7 @@ describe("anotação", function()
       panel.feed "A"
 
       assert.is_true(entry.is_open())
-      assert.equals("Anotação em a.txt", entry.title())
+      assert.equals("issue em a.txt", entry.title())
       entry.type "uma observação\nque não cabe numa frase"
       entry.save()
 
@@ -512,6 +518,142 @@ describe("anotação", function()
       panel.feed "<CR>"
 
       assert.same({ "M  a.txt  ✎ 1" }, panel.section "Vistos")
+    end)
+  end)
+
+  describe("tipo da anotação", function()
+    ---The names the selector offered, in the order it offered them.
+    ---@return string[]
+    local function offered_names()
+      return vim.tbl_map(function(item) return item:match "^(%S+) — " end, confirm.offered())
+    end
+
+    it("é escolhido num seletor antes do texto, com o nome e a instrução de cada tipo", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      confirm.answer_matching "^question "
+      input.answer "por que mudou?"
+      review.annotate()
+
+      assert.same(
+        { "issue", "refactor", "test", "revert", "question", "suggestion", "nitpick", "praise" },
+        offered_names()
+      )
+      assert.matches("^issue — corrija", confirm.offered()[1])
+      assert.matches("^question — responda", confirm.offered()[5])
+      -- A entrada diz o tipo escolhido e o ponto, antes de o revisor escrever.
+      assert.same({ "question em a.txt:2: " }, input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("question", annotations[1].type)
+      assert.equals("por que mudou?", annotations[1].text)
+    end)
+
+    it("é escolhido também antes da entrada longa, que diz o tipo na borda", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 1)
+      confirm.answer_matching "^praise "
+      annotate_selection(1, 3, { long = true })
+
+      assert.equals(1, #confirm.prompts())
+      assert.matches("a%.txt:1%-3", confirm.prompts()[1])
+      assert.equals("praise em a.txt:1-3", entry.title())
+      entry.type "isto ficou bom"
+      entry.save()
+
+      assert.equals("praise", document.annotations()[1].type)
+    end)
+
+    it("vem com o tipo atual primeiro quando a anotação é editada, e pode ser trocado", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      confirm.answer_matching "^test "
+      input.answer "falta teste"
+      review.annotate()
+      confirm.answer_matching "^question "
+      input.answer "isto tem teste?"
+      review.annotate()
+
+      assert.same(
+        { "test", "issue", "refactor", "revert", "question", "suggestion", "nitpick", "praise" },
+        offered_names()
+      )
+      assert.same({ "test em a.txt:2: ", "question em a.txt:2: " }, input.prompts())
+      assert.same({ "", "falta teste" }, input.defaults())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("question", annotations[1].type)
+      assert.equals("isto tem teste?", annotations[1].text)
+    end)
+
+    it("desiste da anotação nova quando o seletor é cancelado", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      confirm.answer(nil)
+      input.answer "não chega a ser pedido"
+      review.annotate()
+      review.annotate { long = true }
+
+      assert.same({}, input.prompts())
+      assert.is_false(entry.is_open())
+      assert.same({}, document.annotations())
+    end)
+
+    it("deixa a anotação editada como estava quando o seletor é cancelado", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      confirm.answer_matching "^nitpick "
+      input.answer "espaço sobrando"
+      review.annotate()
+      confirm.answer(nil)
+      input.answer "reescrita que não vai"
+      review.annotate()
+
+      assert.equals(1, #input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("nitpick", annotations[1].type)
+      assert.equals("espaço sobrando", annotations[1].text)
+    end)
+
+    it("oferece os tipos da configuração: um nome novo no fim, um existente com a instrução trocada", function()
+      review.setup {
+        annotation_types = {
+          { name = "security", instruction = "trate como falha de segurança." },
+          { name = "question", instruction = "responda aqui, sem tocar no código." },
+        },
+      }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      confirm.answer_matching "^security "
+      input.answer "o segredo está no código"
+      panel.feed "a"
+
+      assert.same(
+        { "issue", "refactor", "test", "revert", "question", "suggestion", "nitpick", "praise", "security" },
+        offered_names()
+      )
+      assert.equals("question — responda aqui, sem tocar no código.", confirm.offered()[5])
+      assert.equals("security — trate como falha de segurança.", confirm.offered()[9])
+      assert.equals("security", document.annotations()[1].type)
+    end)
+
+    it("recusa na configuração um tipo sem nome ou sem instrução", function()
+      assert.has_error(function() review.setup { annotation_types = { { name = "security" } } } end)
+      assert.has_error(function() review.setup { annotation_types = { { instruction = "sem nome." } } } end)
+      assert.has_error(function() review.setup { annotation_types = { { name = "", instruction = "vazio." } } } end)
     end)
   end)
 

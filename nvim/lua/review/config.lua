@@ -64,11 +64,20 @@ local M = {}
 ---@field close_on_diff boolean whether going into the diff of a line takes the panel off the screen
 ---@field neo_tree "close"|"ignore" what to do with a neo-tree window in the way
 ---@field report_directory string|nil where the review report is written
+---@field annotation_types ReviewAnnotationType[] types added to the built-in ones, or replacing the instruction of one
 ---@field mappings ReviewMappings
 ---@field merge_layouts ReviewMergeLayouts
 local defaults = {
   position = "left",
   width = 40,
+  -- The types of an annotation the reviewer adds to the eight built in — the
+  -- ones of the Conventional Comments, `issue` first —, each with what it asks
+  -- the agent for. A name that is already a type replaces its instruction; a
+  -- new one goes after the others, in the order given here. The list is the
+  -- reviewer's alone, and the built-in types live with the annotation: the
+  -- options are merged by `vim.tbl_deep_extend`, which takes a list whole, and
+  -- a list written here would replace all eight instead of adding to them.
+  annotation_types = {},
   -- Where the report is written, as an absolute path. Absent, it goes beside
   -- the review state under the editor's data directory — outside the
   -- repository being reviewed, which is the part that is not a preference
@@ -279,6 +288,21 @@ local function validate(options)
     end
     if not vim.startswith(options.report_directory, "/") then
       error(("review: report_directory must be an absolute path, got %q"):format(options.report_directory))
+    end
+  end
+  -- A type is a word the report writes as it is — in an attribute of the XML,
+  -- in a heading of the markdown, at the start of a line of the quickfix — and
+  -- one without an instruction is a type the preamble cannot explain. A table
+  -- keyed by name instead of a list would be silently empty.
+  if not vim.islist(options.annotation_types) then
+    error "review: annotation_types must be a list of { name, instruction }"
+  end
+  for position, kind in ipairs(options.annotation_types) do
+    if type(kind) ~= "table" or type(kind.name) ~= "string" or not kind.name:match "^[%w_-]+$" then
+      error(("review: annotation_types[%d].name must be a word, got %s"):format(position, vim.inspect(kind)))
+    end
+    if type(kind.instruction) ~= "string" or vim.trim(kind.instruction) == "" then
+      error(("review: annotation_types[%d].instruction must be a non-empty string"):format(position))
     end
   end
   for name, key in pairs(options.mappings) do

@@ -50,6 +50,8 @@ end
 ---@field end_line integer|nil the last line of a run; absent on a line alone
 ---@field anchor string|nil the text of those lines when it was written, one per
 ---line (ADR-0003)
+---@field type string|nil what the reviewer asks the agent for with it; absent on
+---one written before annotations had a type, which counts as `issue`
 ---@field text string what the reviewer wrote
 ---@field at string when it was written, in UTC
 
@@ -163,7 +165,8 @@ end
 ---observation being written is about (ADR-0003).
 ---@param point ReviewPoint
 ---@param text string
-function M.annotate(point, text)
+---@param kind string the type of the annotation
+function M.annotate(point, text, kind)
   local document = load(point.root)
 
   local kept = {}
@@ -177,6 +180,7 @@ function M.annotate(point, text)
       line = point.line,
       end_line = point.end_line,
       anchor = point.anchor,
+      type = kind,
       text = text,
       at = os.date "!%Y-%m-%dT%H:%M:%SZ",
     }

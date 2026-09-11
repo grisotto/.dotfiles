@@ -33,6 +33,12 @@ end
 -- template there asks for a directory of its own (`fixture.config_dir`).
 vim.env.XDG_CONFIG_HOME = vim.fn.tempname() .. "-config"
 
+-- The size of the screen the specs read (`tests/helpers/screen.lua`), and the
+-- one every width in the panel is taken from. Fixed so that neither depends on
+-- the machine the suite runs on; 24×80 is what mini.test fixes too.
+vim.o.lines = 24
+vim.o.columns = 80
+
 vim.opt.runtimepath = vim.list_extend({ vim.env.VIMRUNTIME, config_root }, plugins)
 vim.opt.packpath = {}
 vim.opt.swapfile = false

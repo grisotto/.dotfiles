@@ -2,6 +2,7 @@ local fixture = require "tests.helpers.fixture"
 local graph = require "tests.helpers.graph"
 local panel = require "tests.helpers.panel"
 local review = require "review"
+local screen = require "tests.helpers.screen"
 
 local config_root = vim.fn.getcwd()
 
@@ -141,21 +142,46 @@ describe("a linha do painel", function()
       assert.equals("+0 −2", panel.numbers "painel%.txt")
     end)
 
-    it("continua na linha do arquivo já visto, esmaecido junto com ela", function()
-      -- Quão grande é uma mudança não deixa de ser verdade depois de lida; o
-      -- que muda é a cor, que segue o esmaecido do resto da linha.
-      fixture.data_dir()
-      review.setup { seen_display = "dimmed" }
+    it("cai na última coluna do painel, na linha do arquivo", function()
+      -- O helper do painel lê o texto da marca; onde ela cai só a tela mostra,
+      -- porque o alinhamento à direita é o editor que faz, contra a borda da
+      -- janela.
       local repo = fixture.repo()
       repo:commit_file("a.txt", THREE_LINES)
       repo:write("a.txt", "um\n")
 
       open_in(repo.root)
+
+      assert.matches("a%.txt%s+%+0 −2$", screen.window_line_matching(panel.win(), "a%.txt"))
+    end)
+
+    it("continua na linha do arquivo já visto, esmaecido junto com ela", function()
+      -- Quão grande é uma mudança não deixa de ser verdade depois de lida; o
+      -- que muda é a cor, que segue o esmaecido do resto da linha. O esmaecido
+      -- é da linha, e a cor dos números é das marcas deles: os dois compostos
+      -- só a tela mostra. A linha não vista é o controle — nela o que a
+      -- mudança põe e o que ela tira não se parecem.
+      fixture.data_dir()
+      review.setup { seen_display = "dimmed" }
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", THREE_LINES)
+      repo:commit_file("b.txt", THREE_LINES)
+      repo:write("a.txt", "um\n")
+      repo:write("b.txt", THREE_LINES .. "quatro\n")
+
+      open_in(repo.root)
       panel.focus("Unstaged", "a%.txt")
       panel.feed "v"
+      -- A linha do cursor pinta o texto e não os números: com o cursor fora
+      -- das duas, o que se compara é só o esmaecido.
+      panel.focus_header()
 
+      local win = panel.win()
       assert.same({ "M  a.txt" }, panel.dimmed())
       assert.equals("+0 −2", panel.numbers "a%.txt")
+      assert.equals(screen.look(win, "a%.txt", "a.txt"), screen.look(win, "a%.txt", "+0"))
+      assert.equals(screen.look(win, "a%.txt", "a.txt"), screen.look(win, "a%.txt", "−2"))
+      assert.are_not.equal(screen.look(win, "b%.txt", "+1"), screen.look(win, "b%.txt", "−0"))
     end)
 
     it("deixa untracked e conflito sem números, de propósito", function()

@@ -38,6 +38,10 @@ repositório, que é o de verdade: é de lá que o modelo do preâmbulo do relat
 é lido por padrão (`review/preamble.md`), e um modelo que o revisor guardasse ali
 mudaria o que todo relatório da suíte diz.
 
+E fixa o tamanho da tela em 24×80 (`lines` e `columns`), como o mini.test fixa:
+é dela que as larguras do painel saem, e é ela que o helper de tela lê. Sem isso,
+as duas dependeriam da máquina em que a suíte roda.
+
 ## A costura
 
 Uma só, definida na spec do épico (`nvi-01m1d6164sz2`): Neovim headless, um
@@ -86,7 +90,12 @@ acionada, e as afirmações feitas sobre cinco coisas apenas:
     põe uma dele por cima;
 14. o que ele diz em voz alta, lido da UI de notificação do editor de teste
     (`notify.messages`, `notify.last`), que é onde a mensagem aparece para o
-    revisor.
+    revisor;
+15. a tela, lida célula por célula depois de o editor desenhar (`screen.lines`,
+    `screen.window`, `screen.look`), para o que só existe com as janelas
+    compostas: a flutuante por cima do painel e o que está escrito na borda
+    dela, o `+N −M` onde ele cai contra a borda da janela, e se duas coisas da
+    mesma linha se parecem na tela com todas as marcas dela desenhadas.
 
 O terceiro item é a mesma regra dos outros dois — afirmar sobre o que o revisor
 vê — aplicada ao que a spec do épico já mandava cobrir: "O diff construído pelo
@@ -259,6 +268,30 @@ neogit ficam, e pelo mesmo motivo (ADR-0005): é uma chamada de uma linha, e
 cobri-la exigiria um backend falso. O que o hook dele faz — `review.commit` — é
 exatamente o que o grafo daqui faz, e esse caminho é testado.
 
+O décimo quinto entrou com o helper de tela (`nvi-01m28rs8h77r`), para o que as
+outras leituras não alcançam: cada uma lê uma parte — as linhas do buffer, as
+marcas, a configuração da janela —, e o revisor vê o que o editor desenha com
+todas juntas. É a técnica do `child.get_screenshot` do mini.test, sem
+dependência nova e dentro do editor da suíte: `screenstring()` célula por
+célula, depois de um giro do laço e de dois `:redraw`. Os specs rodam de dentro
+de `-c`, antes do `VimEnter`, e lá o primeiro `:redraw` depois de abrir uma
+flutuante a desenha no canto da tela e sem o que está embaixo — toda flutuante
+nova, e não só a primeira. O segundo `:redraw` a põe no lugar; o giro do laço,
+o `:redraw!` e o `nvim__redraw` com `flush` não põem (o experimento E1 de
+`docs/research/rodar-o-neovim-como-agente.md`, refeito com cada um deles). A
+causa não foi achada. O giro do laço fica pelo que o plugin agenda para depois
+de uma tecla, que tem que estar na tela antes de ela ser lida. A tela não
+substitui as
+leituras de antes — uma linha do painel continua lida por `panel.lines`, que não
+depende do tamanho da tela nem do que estiver por cima dela —; ela entra quando
+o que se afirma é a composição.
+
+A cor não sai da tela. `screenattr()` devolve um número que só serve para
+comparar com o de outra célula, então `screen.look` só diz se duas coisas se
+parecem — os números da linha já vista com o caminho dela, o que a mudança põe
+com o que ela tira —, e o grupo de destaque de um trecho continua lido das
+marcas (`panel.highlights`).
+
 Nunca sobre estruturas internas do plugin. Testar a tradução do
 `git status --porcelain=v2` como função isolada foi rejeitado: ela só importa
 através do que aparece no painel; vale o mesmo para a do `git diff-tree --raw`,
@@ -405,6 +438,23 @@ recusa (décimo quarto). A recusa não muda tela nenhuma: sem o aviso, o teste n
 distinguiria a tecla que recusou da tecla que não fez nada. A anotação do
 working tree gravada antes de haver versão é plantada no documento
 (`document.plant`), como a de outro modo.
+
+`tests/helpers/screen.lua` lê a tela do editor de teste como o revisor a vê,
+com flutuantes, bordas, winbars e statuslines: `screen.lines()` devolve todas as
+linhas da tela, e `screen.window(win)` só o retângulo que uma janela cobre — com
+a winbar, numa janela do layout; com a borda, numa flutuante. Uma flutuante é
+lida assim, no lugar dela, e não procurada em qualquer linha da tela: desenhada
+no lugar errado, ela escreveria a mesma borda. É como se afirma que a ajuda
+abre com o título na primeira linha da borda e o rodapé na última (`help_spec`).
+`screen.window_line_matching` devolve a linha do retângulo que casa com um
+padrão, ou nil — que é como se afirma que o `+N −M` termina na última coluna do
+painel (`"a%.txt%s+%+0 −2$"`). `screen.look(win, padrão, texto)` devolve o
+atributo da primeira célula de `texto` na linha da janela que casa com o padrão,
+para ser comparado com o de outro texto. Dois cuidados: um caractere de vários
+bytes, como o `─` da borda, não aceita `+` nem `-` depois dele num padrão Lua, e
+`.-` é o que casa com o trecho; e a linha do cursor pinta o texto dela e não o
+virtual text alinhado à direita, então um teste que compara cores tira o cursor
+da linha antes (`panel.focus_header`).
 
 `tests/helpers/menu.lua` lê o menu de contexto do editor: `menu.entries()` devolve
 as entradas na ordem em que aparecem, `menu.actions()` só as que têm ação e

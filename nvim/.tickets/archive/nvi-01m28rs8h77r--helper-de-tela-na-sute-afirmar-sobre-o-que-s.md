@@ -1,27 +1,28 @@
 ---
 id: nvi-01m28rs8h77r
 title: 'Helper de tela na suíte: afirmar sobre o que só aparece composto'
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T17:38:28.006981632Z'
-updated: '2026-09-11T17:38:28.006981632Z'
+updated: '2026-09-11T18:02:13.399281744Z'
+closed: '2026-09-11T18:02:13.399281744Z'
 assignee: grisotto
 tags:
 - testing
 - review
 acceptance:
 - title: screen.lua devolve as linhas da tela depois de um giro do laço e de um redraw, flutuantes incluídas
-  done: false
+  done: true
 - title: lines e columns fixos no minimal_init
-  done: false
+  done: true
 - title: Ao menos um spec afirma sobre algo composto que a leitura de buffer não mostra
-  done: false
+  done: true
 - title: testing.md descreve a tela como observável da costura
-  done: false
+  done: true
 - title: make format, make lint sem avisos e make test verdes
-  done: false
+  done: true
 ---
 
 ## Description

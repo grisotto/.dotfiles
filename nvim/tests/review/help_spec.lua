@@ -4,6 +4,7 @@ local fixture = require "tests.helpers.fixture"
 local help = require "tests.helpers.help"
 local panel = require "tests.helpers.panel"
 local review = require "review"
+local screen = require "tests.helpers.screen"
 
 local config_root = vim.fn.getcwd()
 
@@ -72,6 +73,21 @@ describe("ajuda das teclas", function()
         listed[spelled(key)] = desc
       end
       assert.same(described, listed)
+    end)
+
+    it("abre por cima do painel, dizendo na borda o que lista e como fecha", function()
+      -- Título e rodapé estão na configuração da janela, mas quem os desenha na
+      -- borda é o editor: só a tela diz que couberam e que o revisor lê os dois.
+      -- Lidos no retângulo em que a janela está, e não em qualquer linha da
+      -- tela: uma flutuante desenhada fora do lugar escreveria a mesma borda.
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.feed "g?"
+
+      local rows = screen.window(help.win())
+      assert.matches("^╭.- Teclas do painel .-╮$", rows[1])
+      assert.matches("^╰ g%? ou q fecha .-╯$", rows[#rows])
     end)
 
     it("fecha no q e devolve o cursor ao painel", function()

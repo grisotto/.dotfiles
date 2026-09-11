@@ -100,6 +100,7 @@ describe("mouse e descoberta das ações", function()
         ["Y"] = "Copiar o caminho absoluto",
         ["R"] = "Gerar o relatório em XML",
         ["M"] = "Gerar o relatório em markdown",
+        ["U"] = "Reabrir a última entrega",
         ["c"] = "Abrir o grafo de commits",
         ["C"] = "Abrir o grafo alternativo",
         ["w"] = "Voltar ao working tree",

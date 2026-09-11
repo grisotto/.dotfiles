@@ -635,7 +635,10 @@ end
 ---report of an empty review says nothing. What an earlier generation left goes
 ---with it, in both formats — the documents and the list are this review as it
 ---stands, and one still holding a delivery that is gone would be saying what
----the review no longer says, in the file they hand to the agent.
+---the review no longer says, in the file they hand to the agent. A mode emptied
+---by a delivery reopened (`U`) and its annotations then deleted is that same
+---case and not a special one: what those files still held was exactly the
+---delivery that has just stopped existing.
 ---@param repository string absolute path of the repository root
 ---@param mode ReviewMode the review to report
 ---@param format ReviewReportFormat

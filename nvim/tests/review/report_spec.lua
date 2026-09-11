@@ -47,14 +47,16 @@ local function repo_with_a_commit_moved_on()
   return repo
 end
 
----Annotate a line on the side after the change of the diff of an entry of a
----commit or a range, the way the reviewer does it: `<CR>` on the entry, the
----cursor on the line of the right side, write the remark.
+---Annotate a line on the side after the change of the diff of an entry, the way
+---the reviewer does it: `<CR>` on the entry, the cursor on the line of the right
+---side, write the remark. That side is the commit in a commit or a range, and
+---the index under Staged — which is what makes the same line number two points.
+---@param section string the section the entry is listed under
 ---@param pattern string a Lua pattern matching the entry
 ---@param line integer
 ---@param text string
-local function annotate_commit_line(pattern, line, text)
-  panel.focus("Mudanças", pattern)
+local function annotate_diff_line(section, pattern, line, text)
+  panel.focus(section, pattern)
   panel.feed "<CR>"
   local side = assert(diff.right(), "o diff não abriu")
   vim.api.nvim_set_current_win(side)
@@ -119,6 +121,17 @@ end
 local function write_template(path, lines)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
   assert(vim.fn.writefile(lines, path) == 0, "could not write " .. path)
+end
+
+---The annotations of the document by text, each with the id of the delivery it
+---went out in, and `false` for one still open.
+---@return table<string, integer|false>
+local function delivered_by_text()
+  local found = {}
+  for _, written in ipairs(document.annotations()) do
+    found[written.text] = written.delivery or false
+  end
+  return found
 end
 
 describe("relatório de revisão", function()
@@ -645,7 +658,7 @@ describe("relatório de revisão", function()
       open_in(repo.root)
       panel.feed "c"
       graph.choose "segundo"
-      annotate_commit_line("a%.txt", 2, "no commit")
+      annotate_diff_line("Mudanças", "a%.txt", 2, "no commit")
 
       local expected = {
         {
@@ -673,7 +686,7 @@ describe("relatório de revisão", function()
       open_in(repo.root)
       panel.feed "c"
       graph.choose "segundo"
-      annotate_commit_line("a%.txt", 2, "no commit")
+      annotate_diff_line("Mudanças", "a%.txt", 2, "no commit")
       panel.feed "R"
 
       assert.equals("2", report.items("xml")[1].lines)
@@ -701,7 +714,7 @@ describe("relatório de revisão", function()
       open_in(repo.root)
       panel.feed "c"
       graph.choose "segundo"
-      annotate_commit_line("a%.txt", 2, "no commit")
+      annotate_diff_line("Mudanças", "a%.txt", 2, "no commit")
       panel.feed "R"
       panel.feed "M"
 
@@ -722,7 +735,7 @@ describe("relatório de revisão", function()
       open_in(repo.root)
       panel.feed "c"
       graph.choose_range("terceiro", "segundo")
-      annotate_commit_line("a%.txt", 1, "no fim do intervalo")
+      annotate_diff_line("Mudanças", "a%.txt", 1, "no fim do intervalo")
 
       generate_both_and_expect_items {
         {
@@ -1053,17 +1066,6 @@ describe("relatório de revisão", function()
     before_each(function() notify.install() end)
     after_each(function() notify.restore() end)
 
-    ---The annotations of the document by text, each with the id of the delivery
-    ---it went out in, and `false` for one still open.
-    ---@return table<string, integer|false>
-    local function delivered_by_text()
-      local found = {}
-      for _, written in ipairs(document.annotations()) do
-        found[written.text] = written.delivery or false
-      end
-      return found
-    end
-
     it("entrega as abertas do modo, e o relatório seguinte só leva as anotadas depois", function()
       -- O agente recebeu a primeira e ajustou o código: trazê-la de novo o faria
       -- refazer o que já fez (ADR-0012).
@@ -1223,6 +1225,158 @@ describe("relatório de revisão", function()
       review.close()
       review.open()
       assert.equals(1, panel.section_count "Vistos")
+    end)
+  end)
+
+  describe("reabrir a última entrega", function()
+    before_each(function() notify.install() end)
+    after_each(function() notify.restore() end)
+
+    it("devolve as anotações da última entrega a abertas e tira a entrega do histórico", function()
+      -- O revisor gerou o relatório, não mandou, e viu que faltava uma anotação:
+      -- `U` desfaz a entrega para ele completar e gerar de novo (ADR-0012).
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "primeira leitura")
+      annotate_line("Unstaged", "a%.txt", 3, "segunda leitura")
+      panel.feed "R"
+      assert.same({ "M  a.txt" }, panel.section "Unstaged")
+
+      panel.feed "U"
+
+      assert.same({ "M  a.txt  ✎ 2" }, panel.section "Unstaged")
+      assert.same({}, document.deliveries())
+      assert.same({ ["primeira leitura"] = false, ["segunda leitura"] = false }, delivered_by_text())
+      assert.is_truthy(notify.last():find("última entrega reaberta", 1, true), notify.last())
+
+      -- Completado o que faltava, o relatório seguinte leva as três de uma vez.
+      annotate_line("Unstaged", "a%.txt", 1, "a esquecida")
+      panel.feed "R"
+
+      assert.same(
+        { "a esquecida", "primeira leitura", "segunda leitura" },
+        vim.tbl_map(function(item) return item.text end, report.items "xml")
+      )
+      assert.equals(1, #document.deliveries())
+    end)
+
+    it("sem entrega nenhuma, avisa e deixa as anotações como estão", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "ainda não entregue")
+
+      panel.feed "U"
+
+      assert.equals("review: nenhuma entrega nesta revisão para reabrir.", notify.last())
+      assert.same({ "M  a.txt  ✎ 1" }, panel.section "Unstaged")
+      assert.same({ ["ainda não entregue"] = false }, delivered_by_text())
+    end)
+
+    it("não reabre no commit a entrega do working tree", function()
+      -- As entregas são de um modo só, como as anotações.
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 3, "no working tree")
+      panel.feed "R"
+
+      panel.feed "c"
+      graph.choose "segundo"
+      panel.feed "U"
+
+      assert.equals("review: nenhuma entrega nesta revisão para reabrir.", notify.last())
+      assert.equals(1, #document.deliveries())
+      assert.same({ ["no working tree"] = document.deliveries()[1].id }, delivered_by_text())
+    end)
+
+    it("recusa nomeando o ponto quando uma anotação aberta está onde uma da entrega estava", function()
+      -- Dois textos no mesmo ponto são o que um ponto não guarda, e escolher
+      -- qual deles sobrevive não é decisão de tomar calado.
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "antes da entrega")
+      panel.feed "R"
+      annotate_line("Unstaged", "a%.txt", 2, "depois da entrega")
+
+      panel.feed "U"
+
+      assert.equals("review: a.txt:2 já tem uma anotação aberta; a última entrega continua fechada.", notify.last())
+      assert.equals(1, #document.deliveries())
+      assert.same(
+        { ["antes da entrega"] = document.deliveries()[1].id, ["depois da entrega"] = false },
+        delivered_by_text()
+      )
+    end)
+
+    it("nomeia a versão do ponto quando a linha não foi lida no disco", function()
+      -- A linha 2 do índice e a linha 2 do disco são pontos diferentes, e quem
+      -- apertou `U` no painel não está olhando para nenhum dos dois: sem a
+      -- versão, o aviso mandaria o revisor ao lugar errado.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\ndois\ntrês\n")
+      repo:write("a.txt", "um\ndois staged\ntrês\n")
+      repo:add "a.txt"
+
+      open_in(repo.root)
+      annotate_diff_line("Staged", "a%.txt", 2, "no índice")
+      panel.feed "R"
+      annotate_diff_line("Staged", "a%.txt", 2, "depois da entrega")
+
+      panel.feed "U"
+
+      assert.equals(
+        "review: a.txt:2 no índice já tem uma anotação aberta; a última entrega continua fechada.",
+        notify.last()
+      )
+    end)
+
+    it("nomeia o commit no ponto que foi lido num commit", function()
+      local repo = repo_with_a_commit_moved_on()
+      local sha = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      annotate_diff_line("Mudanças", "a%.txt", 2, "no commit")
+      panel.feed "R"
+      annotate_diff_line("Mudanças", "a%.txt", 2, "depois da entrega")
+
+      panel.feed "U"
+
+      assert.equals(
+        ("review: a.txt:2 no commit %s já tem uma anotação aberta; a última entrega continua fechada."):format(
+          sha:sub(1, 7)
+        ),
+        notify.last()
+      )
+    end)
+
+    it("leva embora os relatórios do modo quando a reabertura e o apagar esvaziam a revisão", function()
+      -- Reaberta, a anotação volta a ser editável, e apagar o texto todo a
+      -- remove: o modo fica sem anotação aberta e sem entrega, e o arquivo que
+      -- sai para o agente diria o que a revisão não diz mais. É a mesma
+      -- afirmação do teste homônimo em "documento", pelo outro caminho que chega
+      -- lá: o `U`, e não um documento gravado antes de haver entregas.
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "escrita sem querer")
+      panel.feed "R"
+      panel.feed "M"
+      assert.is_true(report.exists "xml")
+      assert.is_true(report.exists "markdown")
+
+      panel.feed "U"
+      annotate_line("Unstaged", "a%.txt", 2, "")
+      assert.same({ "M  a.txt" }, panel.section "Unstaged")
+
+      panel.feed "R"
+
+      assert.is_false(report.exists())
+      assert.same({}, quickfix.items())
     end)
   end)
 end)

@@ -42,6 +42,7 @@ local M = {}
 ---@field help string key of the panel and of the diff that lists every key of where the reviewer is
 ---@field report string key that generates the report of the review under way, in XML
 ---@field report_markdown string key that generates the same report in markdown
+---@field reopen_delivery string key that reopens the last delivery of the mode, putting its annotations back to open
 ---@field graph string key that opens the graph of commits, to review one of them
 ---@field graph_alternate string key that opens the graph the other way
 ---@field branch string key of the graph that restricts it to a branch chosen in a search
@@ -229,6 +230,11 @@ local defaults = {
     -- list that is rarely taller than it.
     report = "R",
     report_markdown = "M",
+    -- "U" for "undo", beside the two keys that generate: reopening the last
+    -- delivery is undoing the act of delivering, for the report that was
+    -- generated and not sent. What it shadows is the editor's "undo the line",
+    -- which in a list nobody types in is not a gesture anyone has.
+    reopen_delivery = "U",
     -- "c" for "commits", and the pair reads like the diff keys: the plain key
     -- is the graph built beside the panel, the shifted one the gitgraph's
     -- drawing of the same history, both switched on to be compared in use

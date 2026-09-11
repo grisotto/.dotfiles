@@ -228,13 +228,35 @@ end
 function M.type_of(written) return written and written.type or DEFAULT_TYPE end
 
 ---Where a point is, as the entries say it: a reviewer who pressed the key on
----the wrong line sees it before writing.
----@param point ReviewPoint
+---the wrong line sees it before writing, and the refusal that names a point —
+---the reopening of a delivery that would land on one already taken — names it
+---the same way.
+---@param point ReviewPoint|ReviewAnnotation
 ---@return string e.g. "a.clj", "a.clj:42", "a.clj:42-44"
-local function where(point)
+function M.where(point)
   if point.end_line then return ("%s:%d-%d"):format(point.path, point.line, point.end_line) end
   if point.line then return ("%s:%d"):format(point.path, point.line) end
   return point.path
+end
+
+---How much of a sha a message writes: enough to look the commit up with, short
+---enough to be read inside a sentence.
+local SHORT_SHA = 7
+
+---Where a point is, whole, for a message read away from it: what the entries
+---say, plus the version the line was read in when that is not the file on disk.
+---The same line number is a different point in the index and in a commit
+---(ADR-0011), and a reviewer who pressed a key in the panel is not looking at
+---either of them — `a.txt:2` alone would send them to the wrong one. The file on
+---disk is what the path alone already means, and a file annotation has no line
+---to have been read anywhere.
+---@param point ReviewPoint|ReviewAnnotation
+---@return string e.g. "a.clj:42", "a.clj:42 no índice", "a.clj:42 no commit 4f1c2ab"
+function M.where_in_full(point)
+  local version = point.version
+  if not version or version == "disk" then return M.where(point) end
+  if version == "index" then return ("%s no índice"):format(M.where(point)) end
+  return ("%s no commit %s"):format(M.where(point), version:sub(1, SHORT_SHA))
 end
 
 ---Ask for the type of the annotation of a point, in the editor's own selection
@@ -256,7 +278,7 @@ local function choose_type(point, current, done)
   local items = vim.tbl_map(function(kind) return ("%s — %s"):format(kind.name, kind.instruction) end, offered)
   vim.ui.select(
     items,
-    { prompt = ("Tipo da anotação em %s"):format(where(point)) },
+    { prompt = ("Tipo da anotação em %s"):format(M.where(point)) },
     function(_, index) done(index and offered[index].name) end
   )
 end
@@ -398,7 +420,7 @@ function M.write(point, opts, done)
   local ask = (opts and opts.long or text:find "\n") and long_entry or one_line_entry
 
   if config.options.annotation_type_entry == "prefix" then
-    ask(where(point), with_prefix(M.type_of(existing), text), function(written)
+    ask(M.where(point), with_prefix(M.type_of(existing), text), function(written)
       if not written then return end
       local kind, rest = split_prefix(vim.trim(written))
       state.annotate(point, rest, kind or DEFAULT_TYPE)
@@ -409,7 +431,7 @@ function M.write(point, opts, done)
 
   choose_type(point, M.type_of(existing), function(kind)
     if not kind then return end
-    ask(("%s em %s"):format(kind, where(point)), text, function(written)
+    ask(("%s em %s"):format(kind, M.where(point)), text, function(written)
       if not written then return end
       state.annotate(point, vim.trim(written), kind)
       done()

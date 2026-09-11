@@ -177,6 +177,7 @@ Locais ao buffer do painel, e sempre sobre a linha onde o cursor está.
 | `A` | Anota o arquivo inteiro na entrada de várias linhas |
 | `R` | Gera o relatório da revisão para o agente em tags XML, copia para a área de transferência e põe os pontos anotados na quickfix |
 | `M` | O mesmo relatório, em markdown |
+| `U` | Reabre a última entrega do modo: as anotações dela voltam a abertas |
 | `c` | Abre o grafo com os commits de todas as branches, ao lado do painel |
 | `C` | Abre o grafo na apresentação alternativa (gitgraph) |
 | `w` | Volta do modo commit para o working tree |
@@ -660,6 +661,15 @@ entrega do working tree não é refeita no relatório de um commit. Todas ficam
 guardadas no documento de estado (veja
 [Onde as coisas são gravadas](#onde-as-coisas-são-gravadas)).
 
+`U` reabre a última entrega do modo, para quando você gerou o relatório e não
+mandou: a entrega sai do histórico e as anotações dela voltam a abertas, com a
+contagem `✎ N` de volta na linha do painel, prontas para editar, completar e
+gerar de novo. Sem entrega no modo, ela avisa. Se uma anotação da entrega cair no
+mesmo ponto de uma anotação aberta — escrita depois dela —, a reabertura é
+recusada inteira e o aviso nomeia o ponto: dois textos no mesmo ponto são o que
+um ponto não guarda, e escolher qual deles o agente recebe é seu. Só a última
+entrega se reabre; as anteriores ficam guardadas.
+
 O documento tem três partes, e nenhuma data:
 
 - o cabeçalho: a raiz absoluta do repositório, a branch e o que foi revisado —
@@ -930,7 +940,12 @@ atualização do ADR-0009.
    salve e aperte `M` e `R` sem anotar nada: o documento colado é idêntico ao da
    entrega, a notificação diz `relatório da última entrega`, e a quickfix aponta
    a linha de hoje. Entre num commit sem anotação e aperte `R`: nada é copiado, e
-   a notificação diz que não há o que relatar.
+   a notificação diz que não há o que relatar. **Reabrir**: com a entrega feita e
+   a linha do painel sem contagem, aperte `U`: a notificação diz
+   `última entrega reaberta`, a contagem volta, e o `R` seguinte traz de novo as
+   anotações dela junto com o que você anotar agora. `U` de novo, sem entrega
+   nenhuma, avisa. Anote um ponto já entregue, aperte `U` e veja a recusa
+   nomeando `a.txt:N`. `U` está no menu de contexto, no which-key e no `g?`.
 11. **Reancoragem** — anote a linha 2 de um arquivo, insira duas linhas acima
    dela, salve e gere o relatório: a anotação sai na linha 4. Agora anote outra
    linha, apague-a, salve e gere: ela sai na lista, no lugar dela,

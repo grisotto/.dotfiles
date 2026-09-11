@@ -506,6 +506,24 @@ anotação (nono). O documento de antes das entregas é o de hoje sem o campo de
 (`document.without "deliveries"`): o que se afirma sobre ele é que a versão não
 subiu e que o visto sobreviveu, lido do painel reaberto.
 
+Reabrir a última entrega (`nvi-01m2723xxhe8`) não trouxe item novo. A tecla é do
+painel: que ela esteja no menu é lido do menu do editor (sétimo), onde
+`mouse_spec` e `commit_spec` listam as entradas uma a uma; que ela esteja no
+which-key e na ajuda é lido da tabela de mapeamentos (décimo terceiro) e da
+janela do `g?`, que `help_spec` afirma serem a mesma lista tecla por tecla, e onde
+ela é nomeada com a descrição que carrega — coberta pela igualdade das duas listas,
+a tecla não apareceria em teste nenhum pelo nome. Depois dela o que se afirma é a contagem na linha do
+painel (primeiro), as entregas e a entrega de cada anotação no documento de estado
+(nono), o relatório seguinte com as anotações devolvidas (décimo) e as três
+respostas que só a notificação separa (décimo quarto): a entrega reaberta, o modo
+sem entrega nenhuma — inclusive num commit, com a entrega do working tree
+guardada — e a recusa que nomeia o ponto. Nenhuma das três muda mais nada na tela.
+
+O caminho em que o modo fica sem anotação aberta e sem entrega, que leva embora os
+relatórios dos dois formatos, é alcançado por `U` seguido de apagar o texto da
+anotação devolvida — além do documento gravado antes das entregas, que é como o
+mesmo teste o alcançava.
+
 `tests/helpers/screen.lua` lê a tela do editor de teste como o revisor a vê,
 com flutuantes, bordas, winbars e statuslines: `screen.lines()` devolve todas as
 linhas da tela, e `screen.window(win)` só o retângulo que uma janela cobre — com

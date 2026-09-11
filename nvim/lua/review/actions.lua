@@ -304,6 +304,24 @@ local function to_clipboard(value)
   vim.fn.setreg('"', value, regtype)
 end
 
+---How many annotations something carries, written the way it is read.
+---@param count integer
+---@return string
+local function counted_annotations(count) return ("%d %s"):format(count, count == 1 and "anotação" or "anotações") end
+
+---The repository an action about the review as a whole is of: the one the panel
+---of this tabpage is listing, and the one the current directory is in when no
+---panel answered. Says so when there is none, because a key that did nothing
+---changes nothing on the screen to say it.
+---@param repository string|nil what the panel answered
+---@return string|nil repository nil when there is none, and the reviewer has been
+---told
+local function reviewed_repository(repository)
+  repository = repository or git.root(vim.fn.getcwd())
+  if not repository then vim.notify("review: fora de um repositório git.", vim.log.levels.WARN) end
+  return repository
+end
+
 ---Generate the review report, put it in the clipboard, and fill the quickfix
 ---with the same points.
 ---
@@ -328,11 +346,8 @@ end
 ---@param done fun()|nil redraws the panel, whose counts a delivery takes the
 ---annotations out of
 function M.report(repository, mode, format, done)
-  repository = repository or git.root(vim.fn.getcwd())
-  if not repository then
-    vim.notify("review: fora de um repositório git.", vim.log.levels.WARN)
-    return
-  end
+  repository = reviewed_repository(repository)
+  if not repository then return end
 
   local path, count, document, redone = report.generate(repository, mode, format)
   -- Nothing is copied from an empty review: what the reviewer had in the
@@ -346,10 +361,52 @@ function M.report(repository, mode, format, done)
   -- already warned about: the document was built all the same, and pasting it
   -- is what it is for.
   to_clipboard(document)
-  local annotations = ("%d %s"):format(count, count == 1 and "anotação" or "anotações")
+  local annotations = counted_annotations(count)
   local copied = redone and ("review: relatório da última entrega (%s) copiado"):format(annotations)
     or ("review: relatório com %s copiado"):format(annotations)
   vim.notify(path and ("%s; gravado em %s"):format(copied, path) or copied)
+  if done then done() end
+end
+
+---Reopen the last delivery of the review under way: it leaves the history and
+---its annotations come back as open, ready to be corrected, completed and
+---generated again. It is for the report that was generated and not sent — a
+---mistake spotted in it, or a remark forgotten (ADR-0012).
+---
+---About the review as a whole and not about a line, like the report, and it
+---takes the repository for the same reason.
+---
+---A point that already holds an annotation written after the delivery stops the
+---whole reopening, and the message names that point: giving the delivered text
+---back would put two remarks on one point, and which of them the agent gets is
+---not something to decide behind the reviewer's back.
+---@param repository string|nil absolute path of the repository root
+---@param mode ReviewMode the review to reopen the delivery of, which is the
+---panel's
+---@param done fun()|nil redraws the panel, whose counts the annotations come
+---back to
+function M.reopen_delivery(repository, mode, done)
+  repository = reviewed_repository(repository)
+  if not repository then return end
+
+  local reopened, clash = state.reopen_last_delivery(repository, mode.key)
+  if clash then
+    vim.notify(
+      ("review: %s já tem uma anotação aberta; a última entrega continua fechada."):format(
+        annotation.where_in_full(clash)
+      ),
+      vim.log.levels.WARN
+    )
+    return
+  end
+  -- Nothing was ever handed over in this review, which is not the same as a
+  -- reopening that failed: said out loud, because nothing on the screen changes.
+  if not reopened then
+    vim.notify("review: nenhuma entrega nesta revisão para reabrir.", vim.log.levels.WARN)
+    return
+  end
+
+  vim.notify(("review: última entrega reaberta (%s)"):format(counted_annotations(#reopened)))
   if done then done() end
 end
 

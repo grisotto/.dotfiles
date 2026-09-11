@@ -6,7 +6,7 @@ type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:05.896993097Z'
-updated: '2026-09-11T20:59:23.378587048Z'
+updated: '2026-09-11T23:12:37.188293290Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,13 +14,13 @@ tags:
 - review
 acceptance:
 - title: U devolve as anotações da última entrega a abertas e tira a entrega do histórico
-  done: false
+  done: true
 - title: Sem entrega no modo, U avisa
-  done: false
+  done: true
 - title: Colisão com anotação aberta no mesmo ponto recusa e nomeia o ponto
-  done: false
+  done: true
 - title: U no menu, no which-key e na ajuda do painel
-  done: false
+  done: true
 deps:
 - nvi-01m2723xn2ga
 ---
@@ -48,3 +48,11 @@ Deixado pela entrega (nvi-01m2723xn2ga): report.generate ainda apaga os .xml/.md
 **2026-09-11T20:59:23.378587048Z**
 
 Correção da nota anterior (achado da revisão): o caminho sem anotação aberta e sem entrega é alcançável sem U — num modo nunca anotado (esvazia a quickfix) e com relatórios gravados antes das entregas ao lado de um documento sem entrega (apaga os .xml/.md). O teste voltou a report_spec nessa forma (document.without "deliveries" e "annotations"). Com U, decidir se apagar os relatórios do modo continua certo quando a reabertura esvazia a última entrega.
+
+**2026-09-11T23:12:37.041574730Z**
+
+Decisão da nota anterior: apagar os .xml/.md do modo quando ele fica sem anotação aberta e sem entrega continua certo com o U.
+
+A reabertura sozinha não esvazia nada — as anotações voltam a abertas e o R seguinte regrava os arquivos. O caminho só é alcançado quando o revisor apaga as anotações devolvidas, e aí o que os arquivos ainda guardavam era exatamente a entrega que deixou de existir: mantê-los seria entregar ao agente o que a revisão não diz mais.
+
+O teste voltou a report_spec por esse caminho ('leva embora os relatórios do modo quando a reabertura e o apagar esvaziam a revisão'), ao lado do que chega lá pelo documento gravado antes das entregas. A razão ficou no comentário de M.generate, em lua/review/report.lua, que antes justificava a limpeza sem falar em reabertura.

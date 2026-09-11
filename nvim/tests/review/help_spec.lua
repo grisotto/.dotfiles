@@ -73,6 +73,10 @@ describe("ajuda das teclas", function()
         listed[spelled(key)] = desc
       end
       assert.same(described, listed)
+      -- Nomeada, e não só coberta pela igualdade acima: que a tecla que reabre a
+      -- entrega esteja na ajuda é critério de aceite dela (`nvi-01m2723xxhe8`), e
+      -- a igualdade sozinha não faz tecla nenhuma aparecer pelo nome.
+      assert.matches("^Reabrir a última entrega do modo", listed["U"] or "")
     end)
 
     it("abre por cima do painel, dizendo na borda o que lista e como fecha", function()

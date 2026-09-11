@@ -180,7 +180,9 @@ local function is_open(annotation) return annotation.delivery == nil end
 ---out the agent changed the code, and what is written on the same point is
 ---another request, not the correction of the one delivered.
 ---@param annotation ReviewAnnotation
----@param point ReviewPoint
+---@param point ReviewPoint|ReviewAnnotation an annotation answers as the point
+---it was written at, which is how a delivery being reopened asks whether its
+---place is still free
 ---@return boolean
 local function is_at(annotation, point)
   return is_open(annotation)
@@ -242,15 +244,68 @@ function M.deliver(root, mode, build)
   return delivery
 end
 
+---Where the last delivery of a mode is in the list of them, if there is one.
+---@param deliveries ReviewDelivery[]
+---@param mode string the mode of the review
+---@return integer|nil
+local function last_delivery_at(deliveries, mode)
+  for index = #deliveries, 1, -1 do
+    if deliveries[index].mode == mode then return index end
+  end
+end
+
 ---The last delivery of a mode, if there is one.
 ---@param root string absolute path of the repository root
 ---@param mode string the mode of the review
 ---@return ReviewDelivery|nil
 function M.last_delivery(root, mode)
   local deliveries = load(root).deliveries
-  for index = #deliveries, 1, -1 do
-    if deliveries[index].mode == mode then return deliveries[index] end
+  local index = last_delivery_at(deliveries, mode)
+  return index and deliveries[index] or nil
+end
+
+---Reopen the last delivery of a mode: it leaves the history and its annotations
+---go back to being open, for the report that was generated and not sent
+---(ADR-0012). The last one alone — reopening an older one would mix requests
+---made about code that has changed several times since.
+---
+---Refused whole when an annotation of it is at the same point as an open one,
+---written after the delivery: the two texts would be two remarks piled on one
+---point, which is the one thing a point does not hold. Which of them the agent
+---gets is the reviewer's to decide, so nothing is written and the annotation in
+---the way is handed back to be named.
+---@param root string absolute path of the repository root
+---@param mode string the mode of the review
+---@return ReviewAnnotation[]|nil reopened the annotations given back as open, in
+---the order they were written — which is what the reviewer is told came back;
+---nil when the mode has no delivery, and when the reopening was refused
+---@return ReviewAnnotation|nil clash the open annotation in the way, which is
+---what tells a refusal from there being nothing to reopen
+function M.reopen_last_delivery(root, mode)
+  local document = load(root)
+  local index = last_delivery_at(document.deliveries, mode)
+  if not index then return nil, nil end
+
+  local delivery = document.deliveries[index]
+  local delivered = vim.tbl_filter(
+    function(annotation) return annotation.delivery == delivery.id end,
+    document.annotations
+  )
+
+  -- Every point is asked before any of them is given back, so a refusal leaves
+  -- the delivery exactly as it was. A delivered annotation never answers for
+  -- itself here: only an open one is at a point.
+  for _, written in ipairs(delivered) do
+    local clash = vim.iter(document.annotations):find(function(other) return is_at(other, written) end)
+    if clash then return nil, clash end
   end
+
+  for _, written in ipairs(delivered) do
+    written.delivery = nil
+  end
+  table.remove(document.deliveries, index)
+  save(root, document)
+  return delivered, nil
 end
 
 ---The open annotation already written at a point, if there is one.

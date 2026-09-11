@@ -517,6 +517,7 @@ describe("modo commit", function()
       assert.equals("Abrir o diff", offered["<CR>"])
       assert.equals("Gerar o relatório em XML", offered["R"])
       assert.equals("Gerar o relatório em markdown", offered["M"])
+      assert.equals("Reabrir a última entrega", offered["U"])
     end)
 
     it("segue com as três teclas mapeadas, para a recusa continuar respondendo", function()

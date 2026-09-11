@@ -1188,6 +1188,14 @@ local function panel_actions()
       desc = "Gerar o relatório da revisão em markdown, copiá-lo para a área de transferência e pôr os pontos na quickfix",
       run = function() actions.report(M.repository(), M.mode(), "markdown", M.refresh) end,
     },
+    -- With the two keys that generate, because it is about the same delivery:
+    -- the report that was generated and not sent comes back to be corrected.
+    {
+      key = mappings.reopen_delivery,
+      label = "Reabrir a última entrega",
+      desc = "Reabrir a última entrega do modo: as anotações dela voltam a abertas, para corrigir o relatório antes de mandá-lo",
+      run = function() actions.reopen_delivery(M.repository(), M.mode(), M.refresh) end,
+    },
     -- The three keys of the mode, together and after the ones about a line:
     -- they are the panel's own, like refreshing and closing are, and what they
     -- change is what the whole list is showing.

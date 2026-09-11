@@ -6,7 +6,7 @@ type: feature
 priority: 2
 mode: afk
 created: '2026-09-11T01:39:19.448011637Z'
-updated: '2026-09-11T21:00:32.366431225Z'
+updated: '2026-09-11T23:12:37.324425094Z'
 assignee: grisotto
 parent: nvi-01m1d6164sz2
 tags:
@@ -26,7 +26,7 @@ acceptance:
 - title: 'Quickfix com #id type, reancorada no disco, item sem linha quando não achado'
   done: false
 - title: Gerar entrega as abertas; gerar sem abertas refaz a última entrega congelada; U reabre a última
-  done: false
+  done: true
 - title: Contagem do painel conta só abertas; anotações antigas continuam válidas sem perder vistos
   done: true
 ---

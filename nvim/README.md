@@ -1,40 +1,54 @@
-# AstroNvim Template
+# Configuração do Neovim
 
-**NOTE:** This is for AstroNvim v6+
+Configuração pessoal sobre o [AstroNvim](https://github.com/AstroNvim/AstroNvim)
+v6, versionada junto com o resto dos dotfiles em `~/projetos/outros/.dotfiles`.
 
-A template for getting started with [AstroNvim](https://github.com/AstroNvim/AstroNvim)
+Tem um painel de revisão de código próprio (`lua/review/`); todas as teclas dele
+estão em [Painel de revisão](#painel-de-revisão).
 
-Esta configuração tem um painel de revisão de código próprio (`lua/review/`);
-todas as teclas dele estão em [Painel de revisão](#painel-de-revisão).
+## 🛠️ Instalação
 
-## 🛠️ Installation
+Esta pasta **não é copiada** para `~/.config/nvim`: ela é apontada de lá por um
+link simbólico, para o repositório continuar sendo o único lugar onde a
+configuração existe. Abrir `~/.config/nvim/init.lua` é abrir o arquivo
+versionado, e `git status` aqui enxerga o que foi editado dentro do editor.
 
-#### Make a backup of your current nvim and shared folder
+Requisitos: Neovim **v0.11 ou mais novo** — v0.12 é a recomendada, e é o que o
+AstroNvim v6 pede —, `git`, e uma Nerd Font no terminal.
+
+#### Guardar o que já existe
+
+Se a máquina já tem Neovim, os quatro diretórios saem da frente antes do link.
+Guardar, e não apagar: estado e cache se refazem sozinhos, mas a configuração
+antiga só existe ali.
 
 ```shell
-mv ~/.config/nvim ~/.config/nvim.bak
+mv ~/.config/nvim      ~/.config/nvim.bak
 mv ~/.local/share/nvim ~/.local/share/nvim.bak
 mv ~/.local/state/nvim ~/.local/state/nvim.bak
-mv ~/.cache/nvim ~/.cache/nvim.bak
+mv ~/.cache/nvim       ~/.cache/nvim.bak
 ```
 
-#### Create a new user repository from this template
-
-Press the "Use this template" button above to create a new repository to store your user configuration.
-
-You can also just clone this repository directly if you do not want to track your user configuration in GitHub.
-
-#### Clone the repository
+#### Clonar os dotfiles e criar o link
 
 ```shell
-git clone https://github.com/<your_user>/<your_repository> ~/.config/nvim
+git clone https://github.com/grisotto/.dotfiles.git ~/projetos/outros/.dotfiles
+ln -s ~/projetos/outros/.dotfiles/nvim ~/.config/nvim
 ```
 
-#### Start Neovim
+O clone vai para o repositório, nunca para `~/.config/nvim`. Clonar em cima do
+lugar do link é o que desfaz o arranjo: passam a existir duas cópias da
+configuração, e a que o editor lê não é a que o `git` acompanha.
+
+#### Abrir o editor
 
 ```shell
 nvim
 ```
+
+Na primeira abertura o lazy.nvim se instala, baixa os plugins, e o Mason instala
+servidores e formatadores. Terminado isso, `:checkhealth astronvim` deve vir sem
+erro.
 
 #### Dicionário de português
 

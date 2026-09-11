@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723xca1y
 title: Anotar no diff de commit e de intervalo, presa ao commit
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:05.346070071Z'
-updated: '2026-09-11T01:43:05.483874119Z'
+updated: '2026-09-11T20:16:55.716883263Z'
+closed: '2026-09-11T20:16:55.716883263Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,15 +15,15 @@ tags:
 - review
 acceptance:
 - title: Lado de depois do diff de commit e de intervalo aceita anotação de linha e de trecho
-  done: false
+  done: true
 - title: Relatório cita a linha e o código do commit, sem reancorar, e o preâmbulo aponta git show
-  done: false
+  done: true
 - title: Quickfix reancorada no disco; item sem linha e marcado quando não está no disco
-  done: false
+  done: true
 - title: No modo commit, o arquivo de hoje recusa a anotação com aviso apontando <C-o>
-  done: false
+  done: true
 - title: Anotações antigas de modo commit sem versão são reancoradas contra o conteúdo do commit
-  done: false
+  done: true
 deps:
 - nvi-01m2723x3vz0
 ---
@@ -44,3 +45,9 @@ Veja a spec: histórias 41, 42, 47, 50, 52, 53, 55, 56; ADR-0011; atualização 
 ## Blocked by
 
 - nvi-01m2723x3vz0
+
+## Notes
+
+**2026-09-11T20:16:55.716883263Z**
+
+Lado de depois do diff de commit e de intervalo anota o commit (versão = sha inteiro, o mais novo num intervalo; âncora lida do lado); ajuda do diff de commit lista as teclas. Arquivo de hoje em modo commit ou intervalo recusa com aviso apontando <C-o>. Relatório cita a linha e o código do commit sem reancorar, e o preâmbulo aponta git show <sha>:<arquivo>. Anotação legada de modo commit sem versão é reancorada contra o commit do modo (achada vira do commit; não achada, não encontrada). Quickfix reancorada no disco pelo código do item; sem linha e com 'não está no disco' quando não achada ou arquivo ausente. Fica em aberto: anotação legada de modo commit não é mais editável pelo editor (ponto sem versão nunca coincide com o do diff).

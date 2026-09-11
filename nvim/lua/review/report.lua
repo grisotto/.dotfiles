@@ -31,6 +31,13 @@
 ---a remark on it comes out not found — the same answer the reviewer gets from
 ---`git status` about that edit, and the honest one for a document that leaves
 ---the editor.
+---
+---Only what still changes after the remark was written is looked for again —
+---the file on disk and the index. A remark on a line of a commit stays on the
+---line of the commit, quoting the commit's code: the commit does not change,
+---and the agent finds the line by its sha (ADR-0011). The quickfix is the
+---exception, because it is the reviewer's way through today's file: its points
+---are looked for on disk, whatever the report says.
 local annotation = require "review.annotation"
 local config = require "review.config"
 local git = require "review.git"
@@ -56,34 +63,54 @@ local M = {}
 ---@field branch string the branch checked out, `(detached)` when none is
 ---@field reference string what was reviewed: HEAD in the working tree, the
 ---whole sha and the subject of a commit, `oldest^..newest` of a range
+---@field commit string|nil the whole sha of the commit the lines quoted are
+---from — the newest of a range; absent in the working tree, where they are the
+---file on disk
 
 ---@class ReviewReport everything a format renders, and nothing it has to look up
 ---@field header ReviewReportHeader
 ---@field items ReviewReportItem[]
 ---@field template string the template of its preamble, with the markers still in it
 
----@class ReviewPlacement one annotation, in the file as it is now
+---@class ReviewPlacement one annotation, where it stands: in the file as it is
+---now, or on the line of the commit it was written on
 ---@field annotation ReviewAnnotation
----@field line integer|nil where it stands now, the first line of a run; absent
----on a file annotation and on a displaced one
----@field end_line integer|nil where a run of lines ends now; absent on a line alone
----@field snippet string[]|nil the lines of code it is about, as they read now
+---@field line integer|nil where it stands, the first line of a run; absent on a
+---file annotation and on a displaced one
+---@field end_line integer|nil where a run of lines ends; absent on a line alone
+---@field snippet string[]|nil the lines of code it is about, as they read where
+---it stands
 ---@field displaced boolean whether the anchor was not found (ADR-0003)
 
----The lines of a file of the repository, read once however many annotations
----are on it. `false` is a file there is nothing to read: deleted since the
----remark was written, or never on disk.
+---The lines of a file of the repository — on disk, or in a commit —, read once
+---however many annotations are on it. `false` is a file there is nothing to
+---read: deleted since the remark was written, never on disk, or not in that
+---commit.
 ---@param repository string absolute path of the repository root
+---@param rev string|nil the commit to read it in; nil is the file on disk
 ---@param path string the file, from the repository root
 ---@param cache table<string, string[]|false>
 ---@return string[]|nil
-local function lines_of(repository, path, cache)
-  if cache[path] == nil then
+local function lines_of(repository, rev, path, cache)
+  -- `<sha>:<path>` for a commit and `:<path>` for the disk: a sha is never
+  -- empty, so a path read in two versions is read twice.
+  local key = ("%s:%s"):format(rev or "", path)
+  if cache[key] == nil then
     local absolute = repository .. "/" .. path
-    cache[path] = vim.fn.filereadable(absolute) == 1 and vim.fn.readfile(absolute) or false
+    if rev then
+      cache[key] = git.show(repository, rev, path) or false
+    else
+      cache[key] = vim.fn.filereadable(absolute) == 1 and vim.fn.readfile(absolute) or false
+    end
   end
-  return cache[path] or nil
+  return cache[key] or nil
 end
+
+---Whether a version is a commit: the one version a line does not move in after
+---it was annotated.
+---@param version ReviewAnnotationVersion|nil
+---@return boolean
+local function is_commit(version) return version ~= nil and version ~= "disk" and version ~= "index" end
 
 ---The lines of an anchor, one per line of the file it was written about: a
 ---remark on a run of lines carries all of them.
@@ -127,19 +154,38 @@ local function anchored_at(lines, anchor, written_at)
   return nearest
 end
 
----Put every annotation where it stands in the file as it is now.
+---Put every annotation where it stands: on the line of the commit it was
+---written on, or in the file as it is now.
 ---@param repository string absolute path of the repository root
+---@param mode ReviewMode the review the annotations are of
 ---@param annotations ReviewAnnotation[]
 ---@return ReviewPlacement[]
-local function place(repository, annotations)
+local function place(repository, mode, annotations)
   local read, placements = {}, {}
   for _, written in ipairs(annotations) do
     -- A file annotation is about all of it: there is no line to lose, and
     -- nothing to reanchor.
     if not written.line then
       placements[#placements + 1] = { annotation = written, displaced = false }
+    elseif is_commit(written.version) then
+      -- Where it was written, quoting what it was written about: the anchor was
+      -- read from the commit, which still reads the same (ADR-0011). Never
+      -- displaced, because there is nothing it could have moved away from.
+      placements[#placements + 1] = {
+        annotation = written,
+        line = written.line,
+        end_line = written.end_line,
+        snippet = written.anchor and anchor_lines(written),
+        displaced = false,
+      }
     else
-      local lines = lines_of(repository, written.path, read)
+      -- Looked for on disk, which is where what still changes after the remark
+      -- ends up. Except the line of a commit or a range written without a
+      -- version: before a commit had lines of its own it was written on today's
+      -- file, and it is looked for in the commit of the mode instead — found
+      -- there, it is a remark about the commit like any other.
+      local rev = not written.version and mode.rev or nil
+      local lines = lines_of(repository, rev, written.path, read)
       -- An annotation tied to a line always carries the text of that line. One
       -- that does not is not a document this code wrote, and there is nothing in
       -- it to look for — least of all a line that happens to be missing too.
@@ -275,7 +321,7 @@ end
 ---@param mode ReviewMode
 ---@return ReviewReport|nil
 local function build(repository, mode)
-  local placements = place(repository, annotation.of_mode(repository, mode))
+  local placements = place(repository, mode, annotation.of_mode(repository, mode))
   if #placements == 0 then return nil end
   table.sort(placements, reads_before)
 
@@ -284,6 +330,7 @@ local function build(repository, mode)
       root = repository,
       branch = git.branch(repository) or "(detached)",
       reference = reference_of(repository, mode),
+      commit = mode.rev,
     },
     items = items_of(placements),
     template = read_preamble_template(),
@@ -320,6 +367,20 @@ local function not_found_rule(items)
   return ""
 end
 
+---Which version the lines quoted are of: a line of a commit and the same
+---number on disk are different lines, and an agent that looks in the wrong
+---place finds the wrong one. In a commit, also how to read the exact content,
+---which is what the agent compares the quote with.
+---@param header ReviewReportHeader
+---@return string
+local function reference_rule(header)
+  if not header.commit then return "As linhas citadas são do arquivo como está no disco agora." end
+  return ("As linhas citadas são do commit %s, e não do disco: o conteúdo exato de um arquivo nele sai de `git show %s:<arquivo>`."):format(
+    header.commit,
+    header.commit
+  )
+end
+
 ---The preamble of a report, in lines. A marker that is filled with nothing
 ---leaves no blank line behind, one the template leaves out is simply not
 ---there, and one that is not a marker stays as it is: a template of the
@@ -329,7 +390,7 @@ end
 local function preamble(report)
   local values = {
     types = types_used(report.items),
-    reference = "As linhas citadas são do arquivo como está no disco agora.",
+    reference = reference_rule(report.header),
     not_found = not_found_rule(report.items),
   }
   local text = report.template:gsub("{([%w_]+)}", values)
@@ -461,11 +522,14 @@ end
 ---list is one line per point. A remark of several lines is cut to its first —
 ---the rest of it is in the document, which is where a paragraph is read.
 ---@param item ReviewReportItem
+---@param on_disk boolean whether the code it quotes is in the file on disk now —
+---which is not whether the report found it: a line of a commit is always found
+---in the report, and can be gone from disk (ADR-0011)
 ---@return string
-local function summary(item)
+local function summary(item, on_disk)
   local lines = vim.split(item.text, "\n", { plain = true })
   local text = #lines > 1 and (lines[1] .. " …") or lines[1]
-  if not item.found then text = "não está no disco · " .. text end
+  if not on_disk then text = "não está no disco · " .. text end
   return ("#%d %s · %s"):format(item.id, item.type, text)
 end
 
@@ -475,28 +539,39 @@ local QUICKFIX_TITLE = "Anotações da revisão"
 ---Put the same points in the editor's own list, in the order of the ids, and
 ---show it: walking the list is walking the report.
 ---
----An item not found goes in without a line — line 0 is the file itself, which
----is where a file annotation lands too. Sending it to the line it used to be on
----is exactly what the anchor exists to prevent, and leaving it out would hide
----it from the reviewer who works from the list.
+---Each point is where the code it quotes is on disk right now, looked for from
+---the line the report gives it — the report of a commit quotes lines of the
+---commit, and the reviewer walks today's file (ADR-0011). The two can give one
+---id different lines, and each is right about what it is for.
+---
+---An item whose code is not on disk goes in without a line — line 0 is the
+---file itself, which is where a file annotation lands too. Sending it to the
+---line it used to be on is exactly what the anchor exists to prevent, and
+---leaving it out would hide it from the reviewer who works from the list.
 ---
 ---A list of its own, and not the one that is already there: whatever the
 ---reviewer was walking before is still a `:colder` away.
 ---@param repository string absolute path of the repository root
 ---@param items ReviewReportItem[]
 local function fill_quickfix(repository, items)
-  local entries = {}
+  local read, entries = {}, {}
   for _, item in ipairs(items) do
+    local first, last = nil, nil
+    if item.code then
+      local lines = lines_of(repository, nil, item.file, read)
+      first = lines and anchored_at(lines, item.code, item.first or 1)
+      last = first and first + #item.code - 1
+    end
     entries[#entries + 1] = {
       filename = repository .. "/" .. item.file,
-      lnum = item.first or 0,
-      end_lnum = item.first and item.last > item.first and item.last or nil,
-      col = item.first and 1 or 0,
+      lnum = first or 0,
+      end_lnum = first and last > first and last or nil,
+      col = first and 1 or 0,
       -- Said out loud, because the editor decides it by the line number: a
       -- point without one is filed as invalid, and `:cnext` skips exactly the
       -- entries this list was careful to keep.
       valid = 1,
-      text = summary(item),
+      text = summary(item, not item.code or first ~= nil),
     }
   end
   vim.fn.setqflist({}, " ", { title = QUICKFIX_TITLE, items = entries })

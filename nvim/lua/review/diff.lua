@@ -33,7 +33,7 @@ local M = {}
 ---@field lines string[]|nil the content, when it was already read
 ---@field version ReviewAnnotationVersion|nil which version of the file the side is, as an
 ---annotation written on it records it; nil on a version the report does not
----find again
+---know how to place
 
 ---@class ReviewDiffKey an action of the diff, written in the winbar beside what
 ---it does and mapped in every one of its buffers
@@ -114,12 +114,15 @@ end
 local function two_way_sides(entry)
   -- A commit is read against what it changed, which is the pair of revs the
   -- entry came with. Neither side is the file on disk: the working tree has
-  -- moved on since, and what is being reviewed is the commit.
+  -- moved on since, and what is being reviewed is the commit. The side after
+  -- it is the commit — the newest one, in a range —, and a line annotated
+  -- there is a line of that commit (ADR-0011).
   if entry.rev then
     return { label = short(entry.base), rev = entry.base, path = entry.orig_path or entry.path }, {
       label = short(entry.rev),
       rev = entry.rev,
       path = entry.path,
+      version = entry.rev,
     }
   end
 
@@ -852,9 +855,10 @@ end
 ---
 ---Only the side after the change takes one — the right one of a comparison of
 ---two —, because what is annotated is what the change came to have, and never
----what it took away. And only a side the report knows how to find again: the
----file on disk and the index. The three versions of a conflict are not a
----comparison of two, and a rev read on its own is a consultation.
+---what it took away. And only a side the report knows how to place: the file on
+---disk, the index and the commit under review. The three versions of a
+---conflict are not a comparison of two, and a rev read on its own is a
+---consultation.
 ---@param sides ReviewDiffSide[] left to right
 ---@param index integer
 ---@return ReviewAnnotationVersion|nil
@@ -926,10 +930,10 @@ end
 ---walking it whether the file is conflicted or not.
 ---
 ---The keys that annotate are named only when the side on the right — where the
----eye ends up — takes an annotation: the file itself in the unstaged diff, and
----the index in the staged one. On a side that takes none — every version of a
----conflict — the key is refused, and a key offered to be refused is worse than
----no key at all.
+---eye ends up — takes an annotation: the file itself in the unstaged diff, the
+---index in the staged one, and the commit in a commit or a range. On a side
+---that takes none — every version of a conflict — the key is refused, and a key
+---offered to be refused is worse than no key at all.
 ---
 ---What a rev is read or compared in does not get any of them: those are
 ---consultations of one file, where the key that matters is the one that gives

@@ -5,6 +5,7 @@ local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
 local fixture = require "tests.helpers.fixture"
+local graph = require "tests.helpers.graph"
 local input = require "tests.helpers.input"
 local panel = require "tests.helpers.panel"
 local quickfix = require "tests.helpers.quickfix"
@@ -31,6 +32,34 @@ local function repo_with_a_change()
   repo:commit_file("a.txt", "um\ndois\ntrês\n")
   repo:write("a.txt", "um\ndois alterado\ntrês\n")
   return repo
+end
+
+---A repository whose last commit changed a file that the disk has moved on
+---from since: a line went in above the one the commit changed, so line 2 of the
+---commit is line 3 of the disk.
+---@return FixtureRepo
+local function repo_with_a_commit_moved_on()
+  local repo = fixture.repo()
+  repo:commit_file("a.txt", "um\ndois\ntrês\n", "primeiro")
+  repo:commit_file("a.txt", "um\ndois no commit\ntrês\n", "segundo")
+  repo:write("a.txt", "zero\num\ndois no commit\ntrês\n")
+  return repo
+end
+
+---Annotate a line on the side after the change of the diff of an entry of a
+---commit or a range, the way the reviewer does it: `<CR>` on the entry, the
+---cursor on the line of the right side, write the remark.
+---@param pattern string a Lua pattern matching the entry
+---@param line integer
+---@param text string
+local function annotate_commit_line(pattern, line, text)
+  panel.focus("Mudanças", pattern)
+  panel.feed "<CR>"
+  local side = assert(diff.right(), "o diff não abriu")
+  vim.api.nvim_set_current_win(side)
+  vim.api.nvim_win_set_cursor(side, { line, 0 })
+  input.answer(text)
+  review.annotate()
 end
 
 ---Annotate a line of a file, the way the reviewer does it: open the file from
@@ -581,6 +610,147 @@ describe("relatório de revisão", function()
           code = { "dois alterado", "três" },
           text = "estas duas andam juntas",
           not_found = true,
+        },
+      }
+    end)
+  end)
+
+  describe("anotação de commit", function()
+    it("cita a linha e o código do commit, sem reancorar no disco, e nunca sai não encontrada", function()
+      -- O commit não muda, e é pelo sha que o agente acha a linha (ADR-0011): a
+      -- linha 2 do commit é a 3 do disco, e o relatório cita a 2.
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      annotate_commit_line("a%.txt", 2, "no commit")
+
+      local expected = {
+        {
+          id = 1,
+          type = "issue",
+          file = "a.txt",
+          lines = "2",
+          code = { "dois no commit" },
+          text = "no commit",
+          not_found = false,
+        },
+      }
+      generate_both_and_expect_items(expected)
+
+      -- O disco perde a linha; o commit continua com ela.
+      repo:write("a.txt", "zero\num\ndois no disco\ntrês\n")
+      generate_both_and_expect_items(expected)
+    end)
+
+    it("vai para a quickfix na linha do disco, e sem linha quando o código não está lá", function()
+      -- A quickfix é a navegação do revisor, e ele anda pelo arquivo de hoje: o
+      -- relatório cita a linha 2 do commit, e a quickfix leva à 3 do disco.
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      annotate_commit_line("a%.txt", 2, "no commit")
+      panel.feed "R"
+
+      assert.equals("2", report.items("xml")[1].lines)
+      assert.same({ { file = repo.root .. "/a.txt", lnum = 3, text = "#1 issue · no commit" } }, quickfix.items())
+
+      repo:write("a.txt", "zero\num\ndois no disco\ntrês\n")
+      panel.feed "R"
+      assert.same(
+        { { file = repo.root .. "/a.txt", lnum = 0, text = "#1 issue · não está no disco · no commit" } },
+        quickfix.items()
+      )
+
+      repo:delete "a.txt"
+      panel.feed "M"
+      assert.same(
+        { { file = repo.root .. "/a.txt", lnum = 0, text = "#1 issue · não está no disco · no commit" } },
+        quickfix.items()
+      )
+    end)
+
+    it("diz no preâmbulo que as linhas são do commit, e como ver o conteúdo exato", function()
+      local repo = repo_with_a_commit_moved_on()
+      local sha = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      annotate_commit_line("a%.txt", 2, "no commit")
+      panel.feed "R"
+      panel.feed "M"
+
+      local instructions = report.instructions "xml"
+      assert.equals(instructions, report.instructions "markdown")
+      assert.is_truthy(instructions:find(("git show %s:"):format(sha), 1, true), instructions)
+      assert.is_nil(instructions:find("no disco agora", 1, true), instructions)
+    end)
+
+    it("cita a linha do commit mais novo no intervalo", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\n", "primeiro")
+      repo:commit_file("a.txt", "dois\n", "segundo")
+      repo:commit_file("a.txt", "três\n", "terceiro")
+      repo:write("a.txt", "quatro\n")
+      local newest = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose_range("terceiro", "segundo")
+      annotate_commit_line("a%.txt", 1, "no fim do intervalo")
+
+      generate_both_and_expect_items {
+        {
+          id = 1,
+          type = "issue",
+          file = "a.txt",
+          lines = "1",
+          code = { "três" },
+          text = "no fim do intervalo",
+          not_found = false,
+        },
+      }
+      assert.is_truthy(report.instructions("xml"):find(("git show %s:"):format(newest), 1, true))
+    end)
+
+    it("reancora contra o commit a anotação de modo commit gravada sem versão, no arquivo de hoje", function()
+      -- Achada no commit, vira anotação do commit, na linha dele; não achada,
+      -- sai não encontrada, com o código de quando foi escrita.
+      local repo = repo_with_a_commit_moved_on()
+      local sha = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      -- A anotação legada é plantada num documento que já existe, e é anotar
+      -- alguma coisa que o faz existir.
+      annotate_file("Mudanças", "a%.txt", "o arquivo todo")
+      for _, legacy in ipairs {
+        { line = 3, anchor = "dois no commit", text = "achada no commit" },
+        { line = 1, anchor = "zero", text = "só no disco" },
+      } do
+        document.plant(vim.tbl_extend("error", legacy, {
+          path = "a.txt",
+          mode = "commit-" .. sha,
+          at = "2026-01-01T00:00:00Z",
+        }))
+      end
+
+      generate_both_and_expect_items {
+        { id = 1, type = "issue", file = "a.txt", text = "o arquivo todo", not_found = false },
+        { id = 2, type = "issue", file = "a.txt", code = { "zero" }, text = "só no disco", not_found = true },
+        {
+          id = 3,
+          type = "issue",
+          file = "a.txt",
+          lines = "2",
+          code = { "dois no commit" },
+          text = "achada no commit",
+          not_found = false,
         },
       }
     end)

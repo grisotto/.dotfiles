@@ -56,7 +56,8 @@ end
 ---@field end_line integer|nil the last line of a run; absent on a line alone
 ---@field version ReviewAnnotationVersion|nil the version the line was read in;
 ---absent on a file annotation, and on a line written before annotations had a
----version, which in the working tree was the file on disk
+---version — which was the file on disk, and in a commit or a range is looked
+---for in the commit of the mode when the report is generated (ADR-0011)
 ---@field anchor string|nil the text of those lines when it was written, one per
 ---line (ADR-0003)
 ---@field type string|nil what the reviewer asks the agent for with it; absent on

@@ -35,16 +35,16 @@ local WORKTREE = require("review.mode").WORKTREE
 
 local M = {}
 
----@alias ReviewAnnotationVersion "disk"|"index" the version of the file a line
----was read in: the file on disk, or the index
+---@alias ReviewAnnotationVersion "disk"|"index"|string the version of the file a
+---line was read in: the file on disk, the index, or the whole sha of the commit
+---— the newest one, in a range
 
 ---@class ReviewPoint what an annotation is attached to
 ---@field root string absolute path of the repository root
 ---@field path string the file, from the repository root
 ---@field mode string the mode of the review it is being written in
 ---@field version ReviewAnnotationVersion|nil the version the line was read in; absent on
----a file annotation, and on a line of the file on disk written in a commit or a
----range
+---a file annotation
 ---@field line integer|nil the line, the first of a run of them; absent on a file annotation
 ---@field end_line integer|nil the last line of a run; absent on a point of one line
 ---@field anchor string|nil the text of those lines, one per line; absent on a file annotation
@@ -89,6 +89,16 @@ local ON_THE_SIDE_BEFORE =
 ---What the key says anywhere else there is no line of the repository to write
 ---on.
 local NOT_A_LINE_OF_THE_FILE = "review: só dá para anotar uma linha do arquivo em si; abra-o pelo painel."
+
+---What the key says on today's file when the review is of a commit or a range:
+---where the line of the commit is, which is the diff one jump back. Asked for
+---when the key is pressed, because the key back is the reviewer's to configure.
+---@return string
+local function on_today_s_file()
+  return ("review: no modo commit ou intervalo o arquivo de hoje não se anota; volte ao diff com %s e anote o lado de depois."):format(
+    config.options.mappings.back_to_diff
+  )
+end
 
 ---The point of lines `first` to `last` of a buffer, read in `version`.
 ---@param repository string absolute path of the repository root
@@ -149,11 +159,12 @@ function M.point_under_cursor(mode)
   if not repository or not path then return nil, NOT_A_LINE_OF_THE_FILE end
 
   -- The file on disk is the disk version of the working tree. In a commit or a
-  -- range it is no version of the review at all, and its line is written as it
-  -- was before annotations had a version: without one, so annotating a line
-  -- annotated that way still edits it.
-  local version = mode.key == WORKTREE.key and "disk" or nil
-  return point_on_lines(repository, path, mode, version, bufnr, first, last)
+  -- range it is no version of the review at all: the report of a commit has
+  -- one reference, the commit, and a line of today's file in it would be a line
+  -- of another version under the same sha (ADR-0011). The way back to the diff
+  -- is the key the reviewer came from it with.
+  if mode.key ~= WORKTREE.key then return nil, on_today_s_file() end
+  return point_on_lines(repository, path, mode, "disk", bufnr, first, last)
 end
 
 ---The annotations of one review: the ones written in that mode, in the order

@@ -140,10 +140,13 @@ Valem em qualquer buffer.
 | `<Leader>gv` | Marca como vista a entrada em que a revisão está e abre o diff da próxima não vista |
 
 As duas de anotação valem num arquivo do repositório e no lado de depois — o da
-direita — de um diff: no de unstaged ele é o próprio arquivo, e no de staged é o
-índice. Não valem no painel, no lado de antes de um diff, nas três versões de um
+direita — de um diff: no de unstaged ele é o próprio arquivo, no de staged é o
+índice, e no modo commit e no intervalo é o commit (o mais novo, num intervalo).
+Não valem no painel, no lado de antes de um diff, nas três versões de um
 conflito, na vista em outro rev (`e`) nem num buffer sem arquivo atrás: ali elas
-avisam em vez de anotar. A ajuda do diff (`g?`) as lista onde elas valem.
+avisam em vez de anotar. No modo commit e no intervalo também não valem no
+arquivo de hoje, aberto com `go`: o aviso aponta o `<C-o>` de volta ao diff. A
+ajuda do diff (`g?`) as lista onde elas valem.
 
 Selecione linhas (`V`) e aperte `<Leader>ga`: a anotação fica presa ao trecho
 inteiro, a entrada diz `a.txt:2-4`, e o relatório cita todas as linhas dele. Um
@@ -295,15 +298,16 @@ logo depois; fechado o diff, a do heirline volta a valer.
 | `g?` | Mostra todas as teclas do diff, com o que cada uma faz (`q` fecha) |
 
 A ajuda lista `<Leader>ga` e `<Leader>gA` quando o lado da direita aceita
-anotação: no diff de unstaged, que é o seu arquivo, e no de staged, que é o
-índice. A anotação feita no índice é lida dele — a âncora é o texto do lado
-anotado — e é um ponto diferente da mesma linha no disco; na geração do
-relatório ela é reancorada no disco, como a do arquivo (veja [Anotações e
-reancoragem](#anotações-e-reancoragem)). O lado de antes de qualquer diff — o
-`HEAD` no staged, o índice no unstaged — recusa com um aviso, porque o que se
-anota é o que a mudança passou a ter; as três versões de um conflito também
-recusam, e ali a ajuda não lista as teclas. As teclas globais não são do diff, e
-ele não as mapeia nem as tira ao sair.
+anotação: no diff de unstaged, que é o seu arquivo, no de staged, que é o
+índice, e no de um commit ou de um intervalo, que é o commit. A anotação é lida
+do lado anotado — a âncora é o texto dele — e é um ponto diferente da mesma
+linha em outra versão. Na geração do relatório a feita no índice é reancorada no
+disco, como a do arquivo, e a feita no commit fica presa à linha do commit (veja
+[Anotações e reancoragem](#anotações-e-reancoragem)). O lado de antes de
+qualquer diff — o `HEAD` no staged, o índice no unstaged, o pai num commit —
+recusa com um aviso, porque o que se anota é o que a mudança passou a ter; as
+três versões de um conflito também recusam, e ali a ajuda não lista as teclas.
+As teclas globais não são do diff, e ele não as mapeia nem as tira ao sair.
 
 As quatro andam pela lista sem voltar a ela: movem o cursor do painel, abrem o
 diff da entrada e deixam o foco no diff, que é onde o revisor está. A ordem é a
@@ -421,6 +425,12 @@ trouxe em relação ao primeiro pai; o primeiro commit do repositório mostra o 
 ele criou, com o lado esquerdo vazio. `s`, `u` e `X` recusam com uma mensagem: o
 que está commitado é história, e essas três teclas mexem no working tree.
 
+No modo commit se anota o lado da direita do diff, que é o commit: a anotação
+fica presa à linha dele, e o relatório cita a linha e o código do commit
+(ADR-0011). O arquivo de hoje, aberto com `go`, não se anota — o aviso aponta o
+`<C-o>` de volta ao diff —, para que o relatório de um commit tenha uma
+referência só.
+
 ### Modo intervalo
 
 Selecionar mais de uma linha do grafo (`V` e `j`/`k`) e apertar `<CR>` revisa o
@@ -494,9 +504,10 @@ que é o antigo em qualquer rev anterior à renomeação.
 ### Anotações e reancoragem
 
 Uma anotação se prende a um ponto: o arquivo, o modo, e a linha ou o trecho
-quando houver, com a versão em que foram lidos — o arquivo no disco, ou o índice
-no diff de staged. A linha 5 do índice e a linha 5 do disco são pontos
-diferentes, porque são linhas diferentes. Dois textos escritos no mesmo ponto
+quando houver, com a versão em que foram lidos — o arquivo no disco, o índice
+no diff de staged, ou o commit no diff de um commit ou de um intervalo. A linha 5
+do índice e a linha 5 do disco são pontos diferentes, porque são linhas
+diferentes. Dois textos escritos no mesmo ponto
 são um só, corrigido — anotar de novo abre a entrada já preenchida, e apagar o
 texto todo remove a anotação.
 
@@ -559,6 +570,15 @@ A anotação feita no índice é reancorada no disco do mesmo jeito: é o disco 
 o agente edita, e a linha que o relatório cita é a do arquivo, achada pelo texto
 lido no índice. Quando esse texto não está no disco, ela sai não encontrada. Uma
 anotação do working tree gravada antes de haver versão conta como do disco.
+
+A anotação feita no commit não é reancorada (ADR-0011): o commit não muda, e o
+relatório cita a linha e o código do commit, mesmo que o disco já tenha mudado —
+por isso ela nunca sai não encontrada. O preâmbulo diz que as linhas são do
+commit e como o agente vê o conteúdo exato, `git show <sha>:<arquivo>`; num
+intervalo, o commit é o mais novo. Uma anotação de modo commit ou intervalo
+gravada antes disso não tem versão — ela foi escrita no arquivo de hoje — e é
+reancorada contra o conteúdo do commit do modo: achada, vira anotação do commit,
+na linha dele; não achada, sai não encontrada.
 
 A anotação de um trecho guarda a primeira e a última linha, e a âncora dela é o
 texto de todas. Ela é reancorada inteira: as linhas têm que estar juntas e na
@@ -665,9 +685,12 @@ um modelo de linguagem, e não um parser.
 
 A quickfix fica com um ponto por anotação, na ordem dos ids, cada um começando
 com `#<id> <tipo>` — que é o que liga o ponto à linha de resposta do agente —, e é
-percorrida com as teclas do editor: `:cnext`, `:cprev`, `:copen`. O item cujo
-trecho não foi encontrado vai sem linha e diz `não está no disco`. A lista
-anterior continua a um `:colder` de distância.
+percorrida com as teclas do editor: `:cnext`, `:cprev`, `:copen`. A linha de
+cada ponto é procurada no disco na hora, pelo código do item, também num
+relatório de commit: o relatório diz onde a linha está no commit, e a quickfix
+onde ela está agora no arquivo que você anda. O item cujo código não está no
+disco — ou cujo arquivo não existe mais — vai sem linha e diz `não está no
+disco`. A lista anterior continua a um `:colder` de distância.
 
 ### O preâmbulo
 
@@ -843,7 +866,15 @@ atualização do ADR-0009.
    da direita anota o índice; `o` e `<Leader>ga` na linha 2 do arquivo é outra
    anotação, e as duas convivem. Insira uma linha acima no disco, salve e gere o
    relatório: a do índice sai na linha 3, com o texto dela. `<Leader>ga` no lado
-   da esquerda de qualquer diff avisa que o lado de antes não se anota. Com um
+   da esquerda de qualquer diff avisa que o lado de antes não se anota. No modo
+   commit (`c` e `<CR>` num commit), `<CR>` num arquivo e `g?` no diff lista
+   `<Leader>ga`; anote a linha 2 do lado da direita, insira uma linha acima dela
+   no disco, salve e gere o relatório: o item cita a linha 2 e o código do
+   commit, o preâmbulo diz `git show <sha>:<arquivo>`, e a quickfix leva à linha
+   3 do arquivo. Mude a linha no disco e gere de novo: o relatório continua
+   igual, e a quickfix diz `não está no disco`. Faça o mesmo num intervalo: a
+   linha é a do commit mais novo. `go` no diff do commit e `<Leader>ga` no
+   arquivo avisam e apontam o `<C-o>`, que traz o diff de volta. Com um
    `annotation_types` em `lua/polish.lua`, o tipo novo aparece no fim do
    seletor, e o que troca a instrução de um existente aparece com a nova.
    Com `annotation_type_entry = "prefix"`, `<Leader>ga` abre a entrada direto,

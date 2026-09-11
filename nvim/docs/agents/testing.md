@@ -478,6 +478,18 @@ distinguiria a tecla que recusou da tecla que não fez nada. A anotação do
 working tree gravada antes de haver versão é plantada no documento
 (`document.plant`), como a de outro modo.
 
+Anotar no diff de commit e de intervalo (`nvi-01m2723xca1y`) também não trouxe
+item novo: o commit e o intervalo entram pelo grafo (décimo segundo), o cursor
+vai ao lado da direita pelo terceiro, e o que se afirma é o sha gravado como
+versão no documento de estado (nono), a linha e o código do commit que o
+relatório cita mesmo com o disco mudado e o preâmbulo que aponta o
+`git show <sha>:<arquivo>` (décimo, `report.items` e `report.instructions`), a
+linha do disco — ou nenhuma — na quickfix (décimo primeiro), as teclas de anotar
+que a ajuda do diff de commit lista (`help.keys`) e o aviso que aponta o `<C-o>`
+quando o arquivo de hoje, aberto com `go`, recusa a anotação (décimo quarto). A anotação de modo
+commit gravada antes de haver versão, escrita no arquivo de hoje, é plantada no
+documento (`document.plant`).
+
 `tests/helpers/screen.lua` lê a tela do editor de teste como o revisor a vê,
 com flutuantes, bordas, winbars e statuslines: `screen.lines()` devolve todas as
 linhas da tela, e `screen.window(win)` só o retângulo que uma janela cobre — com

@@ -4,6 +4,7 @@ local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
 local fixture = require "tests.helpers.fixture"
+local graph = require "tests.helpers.graph"
 local help = require "tests.helpers.help"
 local input = require "tests.helpers.input"
 local notify = require "tests.helpers.notify"
@@ -54,6 +55,18 @@ local function repo_with_a_staged_change()
   repo:write("a.txt", "um\ndois staged\ntrês\n")
   repo:add "a.txt"
   repo:write("a.txt", "zero\num\ndois staged\ntrês\n")
+  return repo
+end
+
+---A repository whose last commit changed a file that the disk has moved on
+---from since: a line went in above the one the commit changed, so line 2 of the
+---commit is line 3 of the disk.
+---@return FixtureRepo
+local function repo_with_a_commit_moved_on()
+  local repo = fixture.repo()
+  repo:commit_file("a.txt", "um\ndois\ntrês\n", "primeiro")
+  repo:commit_file("a.txt", "um\ndois no commit\ntrês\n", "segundo")
+  repo:write("a.txt", "zero\num\ndois no commit\ntrês\n")
   return repo
 end
 
@@ -396,6 +409,53 @@ describe("anotação", function()
     end)
   end)
 
+  describe("no diff de commit e de intervalo", function()
+    it("anota a linha no lado de depois, o commit, com o sha como versão e a âncora lida dele", function()
+      local repo = repo_with_a_commit_moved_on()
+      local sha = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      read_diff("Mudanças", "a%.txt", 2)
+      input.answer "no commit"
+      review.annotate()
+
+      assert.same({ "issue em a.txt:2: " }, input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("commit-" .. sha, annotations[1].mode)
+      assert.equals(sha, annotations[1].version)
+      assert.equals(2, annotations[1].line)
+      assert.equals("dois no commit", annotations[1].anchor)
+      assert.equals("no commit", annotations[1].text)
+    end)
+
+    it("anota o trecho no lado de depois do intervalo, que é o commit mais novo", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\ndois\ntrês\n", "primeiro")
+      repo:commit_file("a.txt", "um\ndois do meio\ntrês\n", "segundo")
+      repo:commit_file("a.txt", "um\ndois do fim\ntrês do fim\n", "terceiro")
+      local oldest = vim.trim(repo:git { "rev-parse", "HEAD~1" })
+      local newest = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose_range("terceiro", "segundo")
+      read_diff("Mudanças", "a%.txt", 1)
+      input.answer "estas duas andam juntas"
+      annotate_selection(2, 3)
+
+      assert.same({ "issue em a.txt:2-3: " }, input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals(("range-%s..%s"):format(oldest, newest), annotations[1].mode)
+      assert.equals(newest, annotations[1].version)
+      assert.same({ 2, 3 }, { annotations[1].line, annotations[1].end_line })
+      assert.equals("dois do fim\ntrês do fim", annotations[1].anchor)
+    end)
+  end)
+
   describe("onde a anotação de linha é recusada", function()
     before_each(function() notify.install() end)
 
@@ -452,6 +512,35 @@ describe("anotação", function()
       assert.equals("disk", document.annotations()[1].version)
     end)
 
+    it("no arquivo de hoje, aberto do diff de commit, apontando a volta ao diff", function()
+      -- Um relatório de commit tem uma referência só, o commit (ADR-0011).
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      read_diff("Mudanças", "a%.txt", 2)
+      diff.feed "go"
+      assert.equals(repo.root .. "/a.txt", vim.api.nvim_buf_get_name(0))
+
+      assert_refused "<C%-o>"
+    end)
+
+    it("no arquivo de hoje, no intervalo", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\n", "primeiro")
+      repo:commit_file("a.txt", "dois\n", "segundo")
+      repo:commit_file("a.txt", "três\n", "terceiro")
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose_range("terceiro", "segundo")
+      read_diff("Mudanças", "a%.txt", 1)
+      diff.feed "go"
+
+      assert_refused "<C%-o>"
+    end)
+
     it("nas três versões de um conflito", function()
       local repo = fixture.repo()
       repo:conflict "conflito.txt"
@@ -501,6 +590,21 @@ describe("anotação", function()
 
       open_in(repo.root)
       panel.focus("Staged", "a%.txt")
+      panel.feed "<CR>"
+      diff.feed "g?"
+
+      local keys = help.keys()
+      assert.matches("^Anotar a linha", keys["<Leader>ga"])
+      assert.matches("várias linhas", keys["<Leader>gA"])
+    end)
+
+    it("lista as teclas de anotar no diff de commit, cujo lado da direita é o commit", function()
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      panel.focus("Mudanças", "a%.txt")
       panel.feed "<CR>"
       diff.feed "g?"
 

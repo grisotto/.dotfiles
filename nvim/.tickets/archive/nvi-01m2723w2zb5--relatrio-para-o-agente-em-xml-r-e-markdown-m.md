@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723w2zb5
 title: Relatório para o agente em XML (R) e markdown (M)
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:04.031752435Z'
-updated: '2026-09-11T01:43:04.152841110Z'
+updated: '2026-09-11T12:29:19.623195877Z'
+closed: '2026-09-11T12:29:19.623195877Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,17 +15,17 @@ tags:
 - review
 acceptance:
 - title: R gera XML e M gera markdown, e o helper de teste lê os mesmos itens dos dois documentos
-  done: false
+  done: true
 - title: Cabeçalho com raiz absoluta, branch e referência do modo, sem data de geração
-  done: false
+  done: true
 - title: Itens em lista plana com id, type, file, lines, código citado e texto; arquivo inteiro sem lines e sem código
-  done: false
+  done: true
 - title: Anotação deslocada entra na lista marcada como não encontrada, e só então o preâmbulo traz a regra dela
-  done: false
+  done: true
 - title: 'Quickfix com #id type em cada item; arquivos .xml e .md gravados fora do repositório e documento copiado'
-  done: false
+  done: true
 - title: R e M no menu, no which-key e na ajuda do painel; README atualizado
-  done: false
+  done: true
 ---
 
 ## Parent

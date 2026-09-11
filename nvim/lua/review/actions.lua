@@ -321,14 +321,15 @@ end
 ---path is the only way the reviewer knows where to find it.
 ---@param repository string|nil absolute path of the repository root
 ---@param mode ReviewMode the review to report, which is the panel's
-function M.report(repository, mode)
+---@param format ReviewReportFormat
+function M.report(repository, mode, format)
   repository = repository or git.root(vim.fn.getcwd())
   if not repository then
     vim.notify("review: fora de um repositório git.", vim.log.levels.WARN)
     return
   end
 
-  local path, count, document = report.generate(repository, mode)
+  local path, count, document = report.generate(repository, mode, format)
   -- Nothing is copied from an empty review: what the reviewer had in the
   -- clipboard is worth more than a report that says nothing.
   if not document then

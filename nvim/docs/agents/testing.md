@@ -63,8 +63,9 @@ acionada, e as afirmações feitas sobre cinco coisas apenas:
    abre (`entry.lines`, `entry.title`), como o painel é lido;
 9. o documento de estado da revisão, lido de volta de onde foi gravado
    (`document.annotations`);
-10. o relatório de revisão, lido de volta de onde foi gravado (`report.headings`,
-    `report.section`), que é o documento com que o revisor sai do editor;
+10. o relatório de revisão, lido de volta de onde foi gravado, em qualquer um dos
+    dois formatos (`report.header`, `report.instructions`, `report.items`), que é
+    o documento com que o revisor sai do editor;
 11. o que ele põe na quickfix do editor, lido da lista do próprio editor
     (`quickfix.items`, `quickfix.is_open`), que é a que o `:cnext` do revisor
     percorre;
@@ -157,9 +158,9 @@ O décimo entrou com o relatório (`nvi-01m1d6hx1mma`), e é a outra metade da
 promessa que o nono deixou pendurada: a âncora e a linha só chegam ao revisor
 por ele. É onde a reancoragem é observável — a âncora só é procurada na geração
 (ADR-0003), e a linha que o relatório escreve é o que a busca achou — e é onde a
-anotação deslocada aparece marcada, na seção própria. É lido como o documento de
-estado, varrendo o diretório de dados: que ele esteja fora do repositório
-revisado é um critério de aceite, não um detalhe de onde procurar.
+anotação deslocada aparece, na mesma lista, marcada como não encontrada. É lido
+como o documento de estado, varrendo o diretório de dados: que ele esteja fora
+do repositório revisado é um critério de aceite, não um detalhe de onde procurar.
 
 Uma anotação de outro modo não tem como ser escrita pelo editor hoje — o painel
 lista o working tree e mais nada —, e o relatório tem que deixá-la de fora. Ela
@@ -402,13 +403,19 @@ varrendo o diretório, sem reconstruir o nome que o módulo de estado dá a ele.
 `document.plant()` põe nele uma anotação à mão, que é como um teste tem uma
 anotação de outro modo — o editor ainda não escreve nenhuma.
 
-`tests/helpers/report.lua` lê de volta o relatório gravado: `report.headings()`
-devolve os arquivos por que ele está agrupado, na ordem, mais a seção das
-deslocadas quando há uma; `report.section "a.txt"` devolve o que está escrito
-sob um deles; `report.lines()` e `report.text()` devolvem o documento inteiro, e
-`report.path()` onde ele foi parar — que é como se afirma que não foi parar
-dentro do repositório revisado. Ele o acha varrendo o diretório de dados, como o
-helper do documento de estado faz.
+`tests/helpers/report.lua` lê de volta o relatório gravado, em qualquer um dos
+dois formatos — `"xml"`, o do `R`, e `"markdown"`, o do `M` —, e devolve o mesmo
+conteúdo dos dois: `report.header "xml"` a raiz, a branch e a referência;
+`report.instructions` o preâmbulo; e `report.items` os itens, cada um com `id`,
+`type`, `file`, `lines` (`"2"` ou `"2-3"`, ausente sem linha), `code`, `text` e
+`not_found`. Ler os dois formatos na mesma forma é o que deixa um teste afirmar
+que `R` e `M` levam os mesmos itens (ADR-0006); o que é só da sintaxe de um deles
+— a cerca na linguagem do arquivo, no markdown — é lido do texto
+(`report.text "markdown"`). `report.lines` e `report.text` devolvem o documento
+inteiro, `report.exists` diz se algum foi gravado, e `report.path` onde ele foi
+parar — que é como se afirma que não foi parar dentro do repositório revisado.
+Ele o acha varrendo o diretório de dados, como o helper do documento de estado
+faz.
 
 `tests/helpers/quickfix.lua` lê a quickfix do editor: `quickfix.items()` devolve
 os pontos da lista — arquivo, linha, a última linha num ponto de trecho

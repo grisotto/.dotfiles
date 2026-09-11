@@ -7,18 +7,17 @@
 ---commit out of the review of the working tree.
 ---
 ---The key is what goes into the state document and into the report's file
----name. The label is how the mode is read by whoever the report is for, who is
----not in this editor and has no panel in front of them.
+---name. The revs are what the report tells the agent was reviewed.
 local M = {}
 
 ---@class ReviewMode the review a moment belongs to
 ---@field key string as it is written in the state document
----@field label string as it is read by whoever gets the report
 ---@field rev string|nil the commit under review — the newest of a range;
 ---absent in the working tree
+---@field oldest string|nil the commit a range starts at; absent otherwise
 
 ---@type ReviewMode
-M.WORKTREE = { key = "worktree", label = "Working tree" }
+M.WORKTREE = { key = "worktree" }
 
 ---The mode a reading of the repository puts the panel in.
 ---
@@ -35,11 +34,11 @@ function M.of(status)
   if status.range then
     return {
       key = ("range-%s..%s"):format(status.range.oldest, status.range.newest),
-      label = "Intervalo " .. status.title,
       rev = status.rev,
+      oldest = status.range.oldest,
     }
   end
-  return { key = "commit-" .. status.rev, label = "Commit " .. status.title, rev = status.rev }
+  return { key = "commit-" .. status.rev, rev = status.rev }
 end
 
 return M

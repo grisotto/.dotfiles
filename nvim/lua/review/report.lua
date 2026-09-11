@@ -1,10 +1,18 @@
----The review report: what the reviewer wrote, taken out of the editor.
+---The review report: what the reviewer wrote, handed to the AI agent that made
+---the change under review.
 ---
----Two halves of one act. A markdown document grouped by file, each remark with
----the path, the line and the line of code quoted, so whoever reads it
----understands without opening the repository — and the quickfix, filled with
----the same points in the same order, so the reviewer walks their own remarks
----with the keys they already have instead of reopening anything.
+---Two halves of one act. A document the reviewer pastes into the conversation
+---with the agent — a header saying where and about what, a preamble saying
+---what to do with each item and how to answer, and the items themselves, one
+---per annotation, each with an id, a type, the file, the lines and the code
+---quoted — and the quickfix, filled with the same points in the same order, so
+---the reviewer walks their own remarks with the keys they already have.
+---
+---In two formats, on two keys (ADR-0006): tags XML and markdown, with exactly
+---the same content, so that comparing them measures the format and nothing
+---else. Which is why this module is three parts that do not reach into each
+---other: building the items reads the repository and the state, rendering
+---them in a format reads neither, and generating writes what was rendered.
 ---
 ---It holds the annotations of the current mode alone: the document is about
 ---the review happening now, not about every remark ever written on this
@@ -14,19 +22,44 @@
 ---Where each annotation stands is decided here, and only here. The line
 ---recorded with it is where it was when it was written, and the file has moved
 ---on since: the anchor is what finds it again (ADR-0003). An anchor that is
----not in the file anymore leaves the annotation displaced — in a section of its
----own, in the quickfix without a line — rather than discarded or pointed at
----the wrong line.
+---not in the file anymore goes in all the same, marked as not found and with
+---the code it was written about, rather than discarded or pointed at the wrong
+---line.
 ---
----Against the file on disk, which is what the panel lists and what whoever
----reads the report will find in the repository. A line changed in a buffer
----and not written yet is not in the file, so a remark on it comes out
----displaced — the same answer the reviewer gets from `git status` about that
----edit, and the honest one for a document that leaves the editor.
+---Against the file on disk, which is what the panel lists and what the agent
+---edits. A line changed in a buffer and not written yet is not in the file, so
+---a remark on it comes out not found — the same answer the reviewer gets from
+---`git status` about that edit, and the honest one for a document that leaves
+---the editor.
 local annotation = require "review.annotation"
 local config = require "review.config"
+local git = require "review.git"
 
 local M = {}
+
+---@alias ReviewReportFormat "xml"|"markdown"
+
+---@class ReviewReportItem one annotation, as the agent gets it
+---@field id integer from 1, in the order the report is read in
+---@field type string what the reviewer asks for with it
+---@field file string from the repository root
+---@field first integer|nil the first line it is about; absent on a file
+---annotation and on one not found
+---@field last integer|nil the last of them, the same as `first` on a line alone
+---@field code string[]|nil the lines quoted; on one not found, the lines it was
+---written about; absent on a file annotation
+---@field text string what the reviewer wrote
+---@field found boolean false when its anchor is not in the file anymore
+
+---@class ReviewReportHeader what the report is about
+---@field root string absolute path of the repository root
+---@field branch string the branch checked out, `(detached)` when none is
+---@field reference string what was reviewed: HEAD in the working tree, the
+---whole sha and the subject of a commit, `oldest^..newest` of a range
+
+---@class ReviewReport everything a format renders, and nothing it has to look up
+---@field header ReviewReportHeader
+---@field items ReviewReportItem[]
 
 ---@class ReviewPlacement one annotation, in the file as it is now
 ---@field annotation ReviewAnnotation
@@ -128,19 +161,229 @@ local function place(repository, annotations)
   return placements
 end
 
----The order the report is read in, which is also the order the quickfix is
----walked in: by file, the remark about the whole file before the ones about
----its lines, and the displaced ones last — where the document puts them, in a
----section of their own.
+---Where a placement is read, as the pair it is sorted by: the line it stands on
+---now, or — for a displaced one — the one it was written on, which is all that
+---is left of where it was. No line at all is the file annotation, read before
+---every line of its file.
+---@param placement ReviewPlacement
+---@return integer first
+---@return integer last
+local function position(placement)
+  local first = placement.line or placement.annotation.line or 0
+  local last = placement.line and placement.end_line or placement.annotation.end_line
+  return first, last or first
+end
+
+---The order the report is read in, which is also the order of the ids and of
+---the quickfix: by file, and within a file by line, the remark about the whole
+---file first. One list, the annotations not found included — the agent goes
+---through the code once, in the order it is written.
 ---@param a ReviewPlacement
 ---@param b ReviewPlacement
 ---@return boolean
 local function reads_before(a, b)
-  if a.displaced ~= b.displaced then return b.displaced end
   if a.annotation.path ~= b.annotation.path then return a.annotation.path < b.annotation.path end
-  -- Within a file, the line each one is on — for a displaced annotation, the
-  -- line it was written on, which is all that is left of where it was.
-  return (a.line or a.annotation.line or 0) < (b.line or b.annotation.line or 0)
+  local a_first, a_last = position(a)
+  local b_first, b_last = position(b)
+  if a_first ~= b_first then return a_first < b_first end
+  -- A line before the run that starts on it, and the rest by what was written:
+  -- the order has to be the same every time, and the sort is not stable.
+  if a_last ~= b_last then return a_last < b_last end
+  return a.annotation.text < b.annotation.text
+end
+
+---What every annotation is until the type of an annotation arrives: the default
+---of the Conventional Comments this report takes its names from.
+local DEFAULT_TYPE = "issue"
+
+---What each type asks the agent for, in the order the preamble lists them.
+---@type { name: string, instruction: string }[]
+local TYPES = {
+  { name = "issue", instruction = "corrija o problema apontado." },
+}
+
+---The items of a report, in the order it is read in.
+---@param placements ReviewPlacement[] already sorted
+---@return ReviewReportItem[]
+local function items_of(placements)
+  local items = {}
+  for id, placement in ipairs(placements) do
+    local written = placement.annotation
+    local item = { id = id, type = DEFAULT_TYPE, file = written.path, text = written.text, found = true }
+    if placement.displaced then
+      item.found = false
+      item.code = written.anchor and anchor_lines(written)
+    elseif placement.line then
+      item.first, item.last = placement.line, placement.end_line or placement.line
+      item.code = placement.snippet
+    end
+    items[#items + 1] = item
+  end
+  return items
+end
+
+---What the header says was reviewed, as git names it: the agent reads git, and
+---a name it can hand straight back to git is one it cannot misread.
+---@param repository string absolute path of the repository root
+---@param mode ReviewMode
+---@return string
+local function reference_of(repository, mode)
+  -- The oldest commit is part of the range, and `^` is what says so to anyone
+  -- who reads git: `a..b` leaves `a` out.
+  if mode.oldest then return ("%s^..%s"):format(mode.oldest, mode.rev) end
+  local commit = git.commit(repository, mode.rev or "HEAD")
+  if mode.rev then return commit and ("%s %s"):format(commit.sha, commit.subject) or mode.rev end
+  -- The working tree is the changes on top of HEAD, which is the base the agent
+  -- has to be on for the lines to be the ones quoted.
+  return commit and ("HEAD %s"):format(commit.sha) or "HEAD (no commits yet)"
+end
+
+---Build the report of a review: the items, placed in the file as it is now, and
+---the header. Nil when the review has no annotation, which is no report.
+---@param repository string absolute path of the repository root
+---@param mode ReviewMode
+---@return ReviewReport|nil
+local function build(repository, mode)
+  local placements = place(repository, annotation.of_mode(repository, mode))
+  if #placements == 0 then return nil end
+  table.sort(placements, reads_before)
+
+  return {
+    header = {
+      root = repository,
+      branch = git.branch(repository) or "(detached)",
+      reference = reference_of(repository, mode),
+    },
+    items = items_of(placements),
+  }
+end
+
+---The preamble the agent reads before the items, with its markers — `{types}`,
+---`{reference}` and `{not_found}` — filled in from the report.
+local PREAMBLE = [[
+Esta é a revisão humana de uma mudança que você fez neste repositório. Cada
+anotação abaixo é um pedido sobre um ponto do código, identificado por um id.
+
+O que cada tipo pede:
+{types}
+
+{reference}
+
+{not_found}
+
+- Não altere nada além do que as anotações pedem.
+- Localize cada trecho pelo código citado, e não só pelo número da linha.
+- Não faça commit: a mudança vai ser validada antes.
+- Ao terminar, responda com uma linha por id: `feito`, `respondido` ou
+  `recusado: motivo`.]]
+
+---@param items ReviewReportItem[]
+---@return string the instruction of each type used, one per line
+local function types_used(items)
+  local used = {}
+  for _, item in ipairs(items) do
+    used[item.type] = true
+  end
+  local lines = {}
+  for _, kind in ipairs(TYPES) do
+    if used[kind.name] then lines[#lines + 1] = ("- `%s`: %s"):format(kind.name, kind.instruction) end
+  end
+  return table.concat(lines, "\n")
+end
+
+---The rule of the items not found, said only when there is one: a rule that
+---does not apply is one more thing for the agent to read and weigh.
+---@param items ReviewReportItem[]
+---@return string empty when every item was found
+local function not_found_rule(items)
+  for _, item in ipairs(items) do
+    if not item.found then
+      return "Uma anotação marcada como trecho não encontrado traz o código de quando foi escrita, que não "
+        .. "está mais no arquivo: procure o trecho você mesmo e, se não o achar, responda "
+        .. "`recusado: trecho não encontrado`."
+    end
+  end
+  return ""
+end
+
+---The preamble of a report, in lines. A marker that is filled with nothing
+---leaves no blank line behind, and one that is not a marker stays as it is.
+---@param report ReviewReport
+---@return string[]
+local function preamble(report)
+  local values = {
+    types = types_used(report.items),
+    reference = "As linhas citadas são do arquivo como está no disco agora.",
+    not_found = not_found_rule(report.items),
+  }
+  local text = PREAMBLE:gsub("{([%w_]+)}", values)
+
+  local lines = {}
+  for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
+    if line ~= "" or (lines[#lines] and lines[#lines] ~= "") then lines[#lines + 1] = line end
+  end
+  while lines[#lines] == "" do
+    table.remove(lines)
+  end
+  return lines
+end
+
+---@param item ReviewReportItem
+---@return string|nil e.g. "2", "2-4"; nil when the item has no lines
+local function span(item)
+  if not item.first then return nil end
+  if item.last > item.first then return ("%d-%d"):format(item.first, item.last) end
+  return tostring(item.first)
+end
+
+---An attribute value, between its quotes and as it is. Nothing in the XML is
+---escaped — not the text, not the code, not the attributes: the reader is a
+---language model, not a parser, and `&amp;` in a commit subject or `&lt;` in a
+---line of code is something it has to translate back before looking for it —
+---in one of the two formats and not in the other, which would make them carry
+---different values.
+---@param value string
+---@return string
+local function attribute(value) return ('"%s"'):format(value) end
+
+---The report in tags XML, the format the Anthropic documentation recommends for
+---mixing instructions and data.
+---@param report ReviewReport
+---@return string[]
+local function xml(report)
+  local header = report.header
+  local lines = {
+    ("<code_review root=%s branch=%s reference=%s>"):format(
+      attribute(header.root),
+      attribute(header.branch),
+      attribute(header.reference)
+    ),
+    "<instructions>",
+  }
+  vim.list_extend(lines, preamble(report))
+  lines[#lines + 1] = "</instructions>"
+
+  for _, item in ipairs(report.items) do
+    local tag = ("<comment id=%s type=%s file=%s"):format(
+      attribute(tostring(item.id)),
+      attribute(item.type),
+      attribute(item.file)
+    )
+    local where = span(item)
+    if where then tag = ("%s lines=%s"):format(tag, attribute(where)) end
+    if not item.found then tag = tag .. ' status="not-found"' end
+    lines[#lines + 1] = tag .. ">"
+    if item.code then
+      lines[#lines + 1] = "<code>"
+      vim.list_extend(lines, item.code)
+      lines[#lines + 1] = "</code>"
+    end
+    vim.list_extend(lines, vim.split(item.text, "\n", { plain = true }))
+    lines[#lines + 1] = "</comment>"
+  end
+
+  lines[#lines + 1] = "</code_review>"
+  return lines
 end
 
 ---A fence long enough to hold `text`: a snippet with backticks in it — a
@@ -156,196 +399,91 @@ local function fence(text)
   return ("`"):rep(math.max(3, longest + 1))
 end
 
----The quoted line, in the language of the file it came from, so the report
----reads as code wherever it is pasted. The editor's own filetype detection
----answers by name alone, which is all there is to go on for a file that is not
----open.
----
----A remark written on empty lines quotes nothing: a fence with nothing inside
----it is a hole in the document, and the line number above it already says
----where the remark is.
----@param lines string[] the document being built, appended to
----@param path string the file the snippet came from
----@param snippet string[]|nil the lines of code
-local function quote(lines, path, snippet)
-  if not snippet or table.concat(snippet) == "" then return end
-
-  local language = vim.filetype.match { filename = path } or ""
-  local edge = fence(table.concat(snippet, "\n"))
-  lines[#lines + 1] = edge .. language
-  vim.list_extend(lines, snippet)
-  lines[#lines + 1] = edge
-  lines[#lines + 1] = ""
-end
-
----The text of the annotation, which is the reviewer's own writing and goes in
----as it was written — several lines included, since the long entry exists
----exactly for the remark that does not fit in one.
----@param lines string[] the document being built, appended to
----@param text string
-local function remark(lines, text)
-  vim.list_extend(lines, vim.split(text, "\n", { plain = true }))
-  lines[#lines + 1] = ""
-end
-
----@param count integer
----@param singular string
----@param plural string
----@return string
-local function counted(count, singular, plural) return ("%d %s"):format(count, count == 1 and singular or plural) end
-
----The lines a remark is about, as the report writes them.
----@param first integer
----@param last integer|nil the end of a run; nil on a line alone
----@return string e.g. "linha 2", "linhas 2–4"
-local function span(first, last)
-  if last then return ("linhas %d–%d"):format(first, last) end
-  return ("linha %d"):format(first)
-end
-
----@param text string
----@return string the same, starting with an upper case letter
-local function capitalized(text) return (text:gsub("^%l", string.upper)) end
-
----What the report says it is, before anything else in it: which review it came
----from, and how much of it there is.
----@param repository string absolute path of the repository root
----@param mode ReviewMode the review it came from
----@param placements ReviewPlacement[]
+---The report in markdown.
+---@param report ReviewReport
 ---@return string[]
-local function heading(repository, mode, placements)
-  local files = {}
-  for _, placement in ipairs(placements) do
-    files[placement.annotation.path] = true
-  end
-
-  return {
-    "# Revisão de " .. vim.fs.basename(repository),
-    "",
-    ("%s · %s em %s · gerado em %s"):format(
-      mode.label,
-      counted(#placements, "anotação", "anotações"),
-      counted(vim.tbl_count(files), "arquivo", "arquivos"),
-      os.date "!%Y-%m-%dT%H:%M:%SZ"
-    ),
+local function markdown(report)
+  local header = report.header
+  local lines = {
+    ("# Code review · %s · branch %s · %s"):format(header.root, header.branch, header.reference),
     "",
   }
-end
+  vim.list_extend(lines, preamble(report))
 
----What the reviewer left on a file, under the file's own heading.
----@param lines string[] the document being built, appended to
----@param path string
----@param placements ReviewPlacement[] of this file, in order, none displaced
-local function file_section(lines, path, placements)
-  lines[#lines + 1] = "## " .. path
-  lines[#lines + 1] = ""
-  for _, placement in ipairs(placements) do
-    local about = placement.line and capitalized(span(placement.line, placement.end_line)) or "O arquivo inteiro"
-    lines[#lines + 1] = ("**%s**"):format(about)
-    lines[#lines + 1] = ""
-    quote(lines, path, placement.snippet)
-    remark(lines, placement.annotation.text)
-  end
-end
+  for _, item in ipairs(report.items) do
+    local where = span(item)
+    local about = where and ("%s:%s"):format(item.file, where) or item.file
+    if not item.found then about = about .. " · trecho não encontrado" end
+    vim.list_extend(lines, { "", ("## %d. %s · %s"):format(item.id, item.type, about), "" })
 
----The annotations whose anchor is gone, at the end and marked as such: the
----reviewer decides what to do with each one, and deciding needs the remark and
----the line it was written about, which is the anchor itself (ADR-0003).
----@param lines string[] the document being built, appended to
----@param placements ReviewPlacement[] the displaced ones, in order
-local function displaced_section(lines, placements)
-  if #placements == 0 then return end
-
-  lines[#lines + 1] = "## Anotações deslocadas"
-  lines[#lines + 1] = ""
-  lines[#lines + 1] = "A âncora destas anotações não está mais no arquivo. O trecho citado é o que"
-  lines[#lines + 1] = "havia quando cada uma foi escrita."
-  lines[#lines + 1] = ""
-  for _, placement in ipairs(placements) do
-    local written = placement.annotation
-    lines[#lines + 1] = ("**%s · %s quando foi escrita**"):format(written.path, span(written.line, written.end_line))
-    lines[#lines + 1] = ""
-    quote(lines, written.path, written.anchor and anchor_lines(written))
-    remark(lines, written.text)
-  end
-end
-
----The whole document.
----@param repository string absolute path of the repository root
----@param mode ReviewMode the review it came from
----@param placements ReviewPlacement[] in the order they are read in
----@return string[] lines
-local function document(repository, mode, placements)
-  local lines = heading(repository, mode, placements)
-
-  local displaced, path, of_this_file = {}, nil, {}
-  for _, placement in ipairs(placements) do
-    if placement.displaced then
-      displaced[#displaced + 1] = placement
-    else
-      -- The placements are already grouped by path by the ordering, so a path
-      -- that is not the one being written is the start of the next file.
-      if placement.annotation.path ~= path then
-        if path then file_section(lines, path, of_this_file) end
-        path, of_this_file = placement.annotation.path, {}
-      end
-      of_this_file[#of_this_file + 1] = placement
+    if item.code then
+      -- In the language of the file it came from, so it reads as code. The
+      -- editor's own detection answers by name alone, which is all there is to
+      -- go on for a file that is not open — and all a renderer may look at.
+      local edge = fence(table.concat(item.code, "\n"))
+      lines[#lines + 1] = edge .. (vim.filetype.match { filename = item.file } or "")
+      vim.list_extend(lines, item.code)
+      vim.list_extend(lines, { edge, "" })
     end
-  end
-  if path then file_section(lines, path, of_this_file) end
-
-  displaced_section(lines, displaced)
-  -- Every block ends with a blank line so the next one starts apart from it;
-  -- the last one has no next one.
-  while lines[#lines] == "" do
-    table.remove(lines)
+    vim.list_extend(lines, vim.split(item.text, "\n", { plain = true }))
   end
   return lines
 end
 
----What the quickfix shows about one point: the remark itself, on one line,
----because the list is one line per point. A remark of several lines is cut to
----its first — the rest of it is in the document, which is where a paragraph is
----read.
----@param placement ReviewPlacement
+---Render a report in a format. Reads nothing but the report: the two formats
+---come out of the same source, which is what makes them comparable.
+---@param report ReviewReport
+---@param format ReviewReportFormat
+---@return string[] lines
+local function render(report, format)
+  if format == "markdown" then return markdown(report) end
+  return xml(report)
+end
+
+---What the quickfix shows about one point: the id and the type, which are what
+---tie it to the agent's line of answer, and the remark on one line, because the
+---list is one line per point. A remark of several lines is cut to its first —
+---the rest of it is in the document, which is where a paragraph is read.
+---@param item ReviewReportItem
 ---@return string
-local function summary(placement)
-  local lines = vim.split(placement.annotation.text, "\n", { plain = true })
+local function summary(item)
+  local lines = vim.split(item.text, "\n", { plain = true })
   local text = #lines > 1 and (lines[1] .. " …") or lines[1]
-  return placement.displaced and ("deslocada · " .. text) or text
+  if not item.found then text = "não está no disco · " .. text end
+  return ("#%d %s · %s"):format(item.id, item.type, text)
 end
 
 ---What the list of the review is called, wherever the editor shows its title.
 local QUICKFIX_TITLE = "Anotações da revisão"
 
----Put the same points in the editor's own list, in the order the document
----reads, and show it: walking the list is walking the report.
+---Put the same points in the editor's own list, in the order of the ids, and
+---show it: walking the list is walking the report.
 ---
----A displaced annotation goes in without a line — line 0 is the file itself,
----which is where a file annotation lands too. Sending it to the line it used
----to be on is exactly what the anchor exists to prevent, and leaving it out
----would hide it from the reviewer who works from the list.
+---An item not found goes in without a line — line 0 is the file itself, which
+---is where a file annotation lands too. Sending it to the line it used to be on
+---is exactly what the anchor exists to prevent, and leaving it out would hide
+---it from the reviewer who works from the list.
 ---
 ---A list of its own, and not the one that is already there: whatever the
 ---reviewer was walking before is still a `:colder` away.
 ---@param repository string absolute path of the repository root
----@param placements ReviewPlacement[]
-local function fill_quickfix(repository, placements)
-  local items = {}
-  for _, placement in ipairs(placements) do
-    items[#items + 1] = {
-      filename = repository .. "/" .. placement.annotation.path,
-      lnum = placement.line or 0,
-      end_lnum = placement.end_line,
-      col = placement.line and 1 or 0,
+---@param items ReviewReportItem[]
+local function fill_quickfix(repository, items)
+  local entries = {}
+  for _, item in ipairs(items) do
+    entries[#entries + 1] = {
+      filename = repository .. "/" .. item.file,
+      lnum = item.first or 0,
+      end_lnum = item.first and item.last > item.first and item.last or nil,
+      col = item.first and 1 or 0,
       -- Said out loud, because the editor decides it by the line number: a
       -- point without one is filed as invalid, and `:cnext` skips exactly the
       -- entries this list was careful to keep.
       valid = 1,
-      text = summary(placement),
+      text = summary(item),
     }
   end
-  vim.fn.setqflist({}, " ", { title = QUICKFIX_TITLE, items = items })
+  vim.fn.setqflist({}, " ", { title = QUICKFIX_TITLE, items = entries })
 
   -- Opened where the editor opens it, and the cursor stays where it was: the
   -- reviewer pressed a key in the panel, and a key pressed in a list does not
@@ -355,62 +493,69 @@ local function fill_quickfix(repository, placements)
   if vim.api.nvim_win_is_valid(from) then vim.api.nvim_set_current_win(from) end
 end
 
+---The extension each format is written with.
+---@type table<ReviewReportFormat, string>
+local EXTENSIONS = { xml = "xml", markdown = "md" }
+
 ---Where the reports are written: the directory the reviewer configured —
 ---absolute, which is what the options make sure of — or, by default, beside
 ---the review state under the editor's data directory (ADR-0004).
 ---@return string
 local function directory() return config.options.report_directory or (vim.fn.stdpath "data" .. "/review/reports") end
 
----One document per repository and mode, rewritten by the next generation: the
----report is about the review happening now, and a directory filling up with
----dated copies of it is a history nobody asked for — the reviewer who wants to
----keep one has it in a file they can move.
+---One document per repository, mode and format, rewritten by the next
+---generation in that format: the report is about the review happening now,
+---and a directory filling up with dated copies of it is a history nobody asked
+---for — the reviewer who wants to keep one has it in a file they can move.
 ---
 ---The root goes into the name percent-encoded, the way the state document's
 ---does: it keeps the name readable and unambiguous, and a file name cannot
 ---hold the "/" the root is full of.
 ---@param repository string absolute path of the repository root
 ---@param mode string the mode the report is of
+---@param format ReviewReportFormat
 ---@return string path
-local function report_path(repository, mode)
+local function report_path(repository, mode, format)
   local name = (repository:gsub("%%", "%%25"):gsub("/", "%%2F"))
-  return ("%s/%s-%s.md"):format(directory(), name, mode)
+  return ("%s/%s-%s.%s"):format(directory(), name, mode, EXTENSIONS[format])
 end
 
----Generate the report of the review under way: write the document, and fill
----the quickfix with the same points.
+---Generate the report of the review under way in a format: write the document,
+---and fill the quickfix with the same points.
 ---
 ---Nothing is written when there is no annotation in this mode: a report of an
----empty review says nothing. What an earlier generation left goes with it —
----the document and the list are this review as it stands, and one still
----holding a remark the reviewer took back would be saying what the review no
----longer says, in the file they hand to someone else.
+---empty review says nothing. What an earlier generation left goes with it, in
+---both formats — the documents and the list are this review as it stands, and
+---one still holding a remark the reviewer took back would be saying what the
+---review no longer says, in the file they hand to the agent.
 ---@param repository string absolute path of the repository root
 ---@param mode ReviewMode the review to report
+---@param format ReviewReportFormat
 ---@return string|nil path where it was written; nil when there was nothing to
 ---write, or writing failed
 ---@return integer count of annotations in it
 ---@return string[]|nil lines of the document, written or not — it is built
 ---before the file is; nil when there was nothing to write
-function M.generate(repository, mode)
-  local path = report_path(repository, mode.key)
-  local placements = place(repository, annotation.of_mode(repository, mode))
-  if #placements == 0 then
-    vim.fn.delete(path)
+function M.generate(repository, mode, format)
+  local report = build(repository, mode)
+  if not report then
+    for other in pairs(EXTENSIONS) do
+      vim.fn.delete(report_path(repository, mode.key, other))
+    end
     vim.fn.setqflist({}, " ", { title = QUICKFIX_TITLE, items = {} })
     return nil, 0, nil
   end
-  table.sort(placements, reads_before)
 
-  local lines = document(repository, mode, placements)
+  local path = report_path(repository, mode.key, format)
+  local lines = render(report, format)
   vim.fn.mkdir(vim.fs.dirname(path), "p")
   if vim.fn.writefile(lines, path) ~= 0 then
     vim.notify("review: não foi possível gravar o relatório em " .. path, vim.log.levels.WARN)
-    return nil, #placements, lines
+    return nil, #report.items, lines
   end
 
-  fill_quickfix(repository, placements)
-  return path, #placements, lines
+  fill_quickfix(repository, report.items)
+  return path, #report.items, lines
 end
 
 return M

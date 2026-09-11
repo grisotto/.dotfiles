@@ -117,14 +117,16 @@ end
 ---of a file changed twice is being read.
 function M.seen_and_next() require("review.panel").seen_and_next() end
 
----Generate the report of the review under way: a markdown document with the
----annotations grouped by file, written outside the repository and put in the
----clipboard, and the same points in the quickfix. Of the repository the panel
----of this tabpage is listing, or of the one containing the current directory
----when there is no panel here.
-function M.report()
+---Generate the report of the review under way, for the agent that made the
+---change: a document with one item per annotation, written outside the
+---repository and put in the clipboard, and the same points in the quickfix. Of
+---the repository the panel of this tabpage is listing, or of the one containing
+---the current directory when there is no panel here.
+---@param opts { format: ReviewReportFormat|nil }|nil the format of the document,
+---tags XML by default
+function M.report(opts)
   local panel = require "review.panel"
-  require("review.actions").report(panel.repository(), panel.mode())
+  require("review.actions").report(panel.repository(), panel.mode(), opts and opts.format or "xml")
 end
 
 return M

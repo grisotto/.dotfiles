@@ -172,7 +172,8 @@ Locais ao buffer do painel, e sempre sobre a linha onde o cursor está.
 | `<Space>` | Marca o arquivo como visto e leva à próxima não vista, sem dar a volta |
 | `a` | Anota o arquivo inteiro, sem linha (entrada de uma linha) |
 | `A` | Anota o arquivo inteiro na entrada de várias linhas |
-| `R` | Gera o relatório da revisão, copia para a área de transferência e põe os pontos anotados na quickfix |
+| `R` | Gera o relatório da revisão para o agente em tags XML, copia para a área de transferência e põe os pontos anotados na quickfix |
+| `M` | O mesmo relatório, em markdown |
 | `c` | Abre o grafo com os commits de todas as branches, ao lado do painel |
 | `C` | Abre o grafo na apresentação alternativa (gitgraph) |
 | `w` | Volta do modo commit para o working tree |
@@ -494,8 +495,9 @@ entrada já preenchida, e apagar o texto todo remove a anotação.
 Cada anotação de linha guarda o número da linha e também o texto dela, a âncora
 (ADR-0003). Na geração do relatório, se o texto não bate mais, a âncora é
 procurada no arquivo e a anotação é reancorada na linha em que está agora; se não
-for encontrada, ela sai marcada como deslocada, com o trecho que havia quando foi
-escrita, em vez de ser descartada ou de apontar para a linha errada. Guardar só o
+for encontrada, a anotação fica deslocada: entra na mesma lista marcada como
+trecho não encontrado, sem linha e com o código que havia quando foi escrita, em
+vez de ser descartada ou de apontar para a linha errada. Guardar só o
 número faria a anotação apontar para o lugar errado depois de qualquer edição
 acima dela, e extmarks resolveriam isso só enquanto o buffer estivesse aberto —
 anotações precisam sobreviver a fechar o editor.
@@ -549,15 +551,64 @@ tree. Um menu que oferece o que vai ser recusado é pior do que não ter menu.
 
 ### Depois de `R`
 
+O relatório é escrito para o agente de IA que fez a mudança: você cola na
+conversa com ele, e ele entende sem você explicar nada. `R` gera em tags XML e
+`M` gera o mesmo relatório em markdown — os mesmos itens, na mesma ordem, com os
+mesmos ids e o mesmo preâmbulo —, para comparar em uso qual formato o agente
+entende melhor (ADR-0006).
+
 O documento inteiro vai para a área de transferência (`+`) e para o registro
-sem nome (`"`): é só colar no PR, no ticket ou na mensagem. O arquivo `.md`
-também é gravado (veja [Onde as coisas são gravadas](#onde-as-coisas-são-gravadas)),
+sem nome (`"`), no formato da tecla apertada. Cada formato também grava o seu
+arquivo, `.xml` ou `.md` (veja [Onde as coisas são gravadas](#onde-as-coisas-são-gravadas)),
 e a notificação diz as duas coisas. Numa revisão sem anotação nada é copiado — o
 que estava na área de transferência continua lá.
 
-A quickfix fica com um ponto por anotação, na mesma ordem em que o relatório é
-lido, e é percorrida com as teclas do editor: `:cnext`, `:cprev`, `:copen`. A
-lista anterior continua a um `:colder` de distância.
+O documento tem três partes, e nenhuma data:
+
+- o cabeçalho: a raiz absoluta do repositório, a branch e o que foi revisado —
+  `HEAD <sha>` no working tree, `<sha> <assunto>` num commit e
+  `<mais antigo>^..<mais novo>` num intervalo, sempre com o sha inteiro;
+- o preâmbulo: que é a revisão humana da mudança dele, o que cada tipo usado
+  pede, que não altere nada além do pedido, que localize cada trecho pelo código
+  citado, que não faça commit e que responda uma linha por id com `feito`,
+  `respondido` ou `recusado: motivo`. A regra do trecho não encontrado só aparece
+  quando algum item é assim;
+- os itens, numa lista só, ordenada por arquivo e por linha, com a anotação de
+  arquivo antes das de linha. Cada um tem `id`, tipo, arquivo, linhas, o código
+  citado exatamente como está e o texto. A anotação de arquivo inteiro vai sem
+  linhas e sem código.
+
+Por enquanto toda anotação sai como `issue`.
+
+```xml
+<code_review root="/home/eu/projeto" branch="main" reference="HEAD 4f1c…">
+<instructions>
+…
+</instructions>
+<comment id="1" type="issue" file="src/a.clj" lines="42-44">
+<code>
+(defn soma [a b]
+  (- a b))
+</code>
+O nome diz soma e o corpo subtrai.
+</comment>
+<comment id="2" type="issue" file="src/b.clj" status="not-found">
+…
+</comment>
+</code_review>
+```
+
+No markdown o cabeçalho é o título (`# Code review · <raiz> · branch <b> · <referência>`),
+cada item é um `## <id>. <tipo> · <arquivo>:<linhas>` (com
+` · trecho não encontrado` quando for o caso) e o código vai numa cerca na
+linguagem do arquivo. No XML o texto e o código vão crus, sem entidades: quem lê é
+um modelo de linguagem, e não um parser.
+
+A quickfix fica com um ponto por anotação, na ordem dos ids, cada um começando
+com `#<id> <tipo>` — que é o que liga o ponto à linha de resposta do agente —, e é
+percorrida com as teclas do editor: `:cnext`, `:cprev`, `:copen`. O item cujo
+trecho não foi encontrado vai sem linha e diz `não está no disco`. A lista
+anterior continua a um `:colder` de distância.
 
 ### O que é do neogit e do diffview
 
@@ -590,8 +641,9 @@ Nunca dentro do repositório revisado, para a revisão não sujar a lista que o
 próprio painel está mostrando:
 
 - vistos e anotações: `~/.local/share/nvim/review/<raiz do repo>.json`
-- relatório: `~/.local/share/nvim/review/reports/<raiz do repo>-<modo>.md`, com o
-  modo sendo `worktree`, `commit-<sha>` ou `range-<sha>..<sha>`
+- relatório: `~/.local/share/nvim/review/reports/<raiz do repo>-<modo>.xml` (`R`)
+  e `<raiz do repo>-<modo>.md` (`M`), cada um regravado a cada geração no seu
+  formato, com o modo sendo `worktree`, `commit-<sha>` ou `range-<sha>..<sha>`
 
 A raiz vai no nome com as barras escapadas (`%2F`). O destino do relatório é
 configurável em `lua/polish.lua` (`report_directory`, caminho absoluto).
@@ -606,7 +658,8 @@ relatório, que existe exatamente para sair do editor.
 
 Onde havia dúvida genuína sobre qual apresentação funciona melhor — diff inline
 (`<CR>`) vs. aba do diffview (`d`); os três layouts de conflito (`<CR>`, `d`,
-`D`); grafo do painel (`c`) vs. gitgraph (`C`) —, todas as alternativas ficam
+`D`); grafo do painel (`c`) vs. gitgraph (`C`); relatório em XML (`R`) vs.
+markdown (`M`) —, todas as alternativas ficam
 ligadas ao mesmo tempo, em teclas diferentes, em vez de atrás de uma opção de
 configuração (ADR-0006). Uma opção se testa uma vez e nunca mais: o revisor
 esquece qual está ativa e nunca compara de verdade. Teclas paralelas permitem
@@ -691,16 +744,27 @@ atualização do ADR-0009.
    diz `:N-M`, e o modo visual já saiu. Com `<CR>` num arquivo unstaged, `g?`
    no diff lista `<Leader>ga`; num staged, não.
 10. **Relatório** — `R`. A notificação diz que ele foi copiado e onde foi
-   gravado; a quickfix abre com os pontos, e o cursor fica no painel. Cole
-   (`<C-S-v>` no terminal, ou `p` no editor): é o `.md` inteiro, com as anotações
-   agrupadas por arquivo, cada uma com a linha e o trecho de código citado — o
-   trecho anotado sai como `**Linhas N–M**` com todas as linhas.
-   `git status` no repositório revisado continua igual ao de antes.
+   gravado (`….xml`); a quickfix abre com os pontos, cada um começando com
+   `#<id> issue`, e o cursor fica no painel. Cole (`<C-S-v>` no terminal, ou `p`
+   no editor): é o `.xml` inteiro — `<code_review>` com a raiz absoluta, a branch
+   e `HEAD <sha>`, sem data; o preâmbulo em `<instructions>`; e um `<comment>` por
+   anotação com `id`, `type`, `file`, `lines`, o código citado em `<code>` e o
+   texto. A anotação de arquivo inteiro vai sem `lines` e sem `<code>`; o trecho
+   anotado sai como `lines="N-M"` com todas as linhas. Agora `M`: o `.md` gravado
+   ao lado tem o mesmo cabeçalho no título, o mesmo preâmbulo e os mesmos itens,
+   como `## <id>. issue · <arquivo>:<linhas>`, com o código na linguagem do
+   arquivo. Menu de contexto, which-key e `g?` no painel mostram `R` e `M`. Num
+   commit, o cabeçalho traz o sha inteiro e o assunto; num intervalo,
+   `<mais antigo>^..<mais novo>`. `git status` no repositório revisado continua
+   igual ao de antes.
 11. **Reancoragem** — anote a linha 2 de um arquivo, insira duas linhas acima
    dela, salve e gere o relatório de novo: a anotação sai na linha 4. Agora
-   apague a linha anotada, salve e gere: ela sai na seção `Anotações
-   deslocadas`, com o trecho que havia quando foi escrita, e na quickfix marcada
-   como `deslocada · …` (o `:cnext` chega nela).
+   apague a linha anotada, salve e gere: ela continua na lista, no lugar dela,
+   marcada como não encontrada (`status="not-found"`, ou ` · trecho não
+   encontrado` no markdown), sem linhas e com o código que havia quando foi
+   escrita; só então o preâmbulo traz a regra do trecho não encontrado. Na
+   quickfix ela sai como `#<id> issue · não está no disco · …` (o `:cnext` chega
+   nela).
 12. **Menu** — clique direito dentro do painel: as entradas mostram a ação e a
     tecla; escolher uma faz o mesmo que a tecla.
 13. **Persistência** — `q` e `<Leader>r` de novo: vistos e contagens de anotação

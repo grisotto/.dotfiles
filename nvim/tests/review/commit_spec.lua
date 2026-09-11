@@ -512,7 +512,8 @@ describe("modo commit", function()
       -- O resto continua lá: o que sai é o que o modo não pode fazer, e não o
       -- menu inteiro.
       assert.equals("Abrir o diff", offered["<CR>"])
-      assert.equals("Gerar o relatório", offered["R"])
+      assert.equals("Gerar o relatório em XML", offered["R"])
+      assert.equals("Gerar o relatório em markdown", offered["M"])
     end)
 
     it("segue com as três teclas mapeadas, para a recusa continuar respondendo", function()
@@ -726,6 +727,27 @@ describe("modo commit", function()
       assert.equals(1, #annotations)
       assert.equals(("range-%s..%s"):format(oldest, newest), annotations[1].mode)
     end)
+
+    it("saem num relatório que diz o intervalo como o git o lê, com o commit mais antigo dentro", function()
+      -- `a..b` deixaria o mais antigo de fora para quem lê git; o `^` é o que diz
+      -- que ele entrou na revisão.
+      local repo = repo_with_a_series()
+      local oldest = vim.trim(repo:git { "rev-parse", "HEAD~1" })
+      local newest = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose_range("terceiro", "segundo")
+      input.answer "isto veio do intervalo"
+      panel.focus("Mudanças", "a%.txt")
+      panel.feed "a"
+      panel.feed "R"
+      panel.feed "M"
+
+      local expected = { root = repo.root, branch = "main", reference = ("%s^..%s"):format(oldest, newest) }
+      assert.same(expected, report.header "xml")
+      assert.same(expected, report.header "markdown")
+    end)
   end)
 
   describe("o visto atravessa os modos", function()
@@ -785,9 +807,11 @@ describe("modo commit", function()
       assert.equals("commit-" .. sha, annotations[1].mode)
     end)
 
-    it("saem num relatório que diz de que commit ele é", function()
+    it("saem num relatório que diz de que commit ele é, pelo sha inteiro e pelo assunto", function()
+      -- O sha inteiro é o que nenhum commit posterior torna ambíguo para o
+      -- agente.
       local repo = repo_with_branches()
-      local short = vim.trim(repo:git { "rev-parse", "--short", "HEAD" })
+      local sha = vim.trim(repo:git { "rev-parse", "HEAD" })
 
       open_in(repo.root)
       panel.feed "c"
@@ -796,10 +820,13 @@ describe("modo commit", function()
       panel.focus("Mudanças", "a%.txt")
       panel.feed "a"
       panel.feed "R"
+      panel.feed "M"
 
-      assert.same({ "a.txt" }, report.headings())
-      assert.is_not_nil(report.text():match("Commit " .. short))
-      assert.is_not_nil(report.path():match "%-commit%-%x+%.md$")
+      local expected = { root = repo.root, branch = "main", reference = sha .. " segundo" }
+      assert.same(expected, report.header "xml")
+      assert.same(expected, report.header "markdown")
+      assert.equals("isto veio do commit", report.items("xml")[1].text)
+      assert.is_not_nil(report.path("xml"):match "%-commit%-%x+%.xml$")
     end)
   end)
 end)

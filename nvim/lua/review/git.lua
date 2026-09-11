@@ -343,6 +343,29 @@ function M.root(cwd)
   return vim.trim(result.stdout or "")
 end
 
+---The branch checked out in the repository.
+---@param root string absolute path of the repository root
+---@return string|nil branch nil when HEAD is detached
+function M.branch(root)
+  local result = git({ "symbolic-ref", "--quiet", "--short", "HEAD" }, root)
+  if result.code ~= 0 then return nil end
+  return vim.trim(result.stdout or "")
+end
+
+---What identifies a commit to whoever has to find it again: the whole object
+---name, which no later commit makes ambiguous, and the subject.
+---@param root string absolute path of the repository root
+---@param rev string anything git resolves to a commit
+---@return { sha: string, subject: string }|nil nil when it resolves to none — a
+---repository where nothing was committed has no HEAD
+function M.commit(root, rev)
+  local result = git({ "show", "--no-patch", "--format=%H%x00%s", rev, "--" }, root)
+  if result.code ~= 0 then return nil end
+  local sha, subject = unpack(vim.split(vim.trim(result.stdout or ""), "\0", { plain = true }))
+  if not sha or sha == "" then return nil end
+  return { sha = sha, subject = subject or "" }
+end
+
 ---Read a path as it is in a rev: `HEAD` for the last commit, `:0` for the
 ---index. A rev that does not have the path — a file only just added, or
 ---already deleted — is not a failure to report: it is an empty side of a diff.

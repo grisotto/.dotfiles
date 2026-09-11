@@ -1171,14 +1171,22 @@ local function panel_actions()
       desc = "Copiar o caminho absoluto do arquivo",
       run = on_entry(actions.copy_absolute_path),
     },
+    -- The two formats of the same report, side by side to be compared in use
+    -- (ADR-0006).
     {
       key = mappings.report,
-      label = "Gerar o relatório",
-      desc = "Gerar o relatório da revisão, copiá-lo para a área de transferência e pôr os pontos na quickfix",
+      label = "Gerar o relatório em XML",
+      desc = "Gerar o relatório da revisão em tags XML, copiá-lo para a área de transferência e pôr os pontos na quickfix",
       -- Not `on_entry`: the report is about the review, not about the line the
       -- cursor happens to be on, and it is generated from the header of the
       -- panel as much as from a file in it.
-      run = function() actions.report(M.repository(), M.mode()) end,
+      run = function() actions.report(M.repository(), M.mode(), "xml") end,
+    },
+    {
+      key = mappings.report_markdown,
+      label = "Gerar o relatório em markdown",
+      desc = "Gerar o relatório da revisão em markdown, copiá-lo para a área de transferência e pôr os pontos na quickfix",
+      run = function() actions.report(M.repository(), M.mode(), "markdown") end,
     },
     -- The three keys of the mode, together and after the ones about a line:
     -- they are the panel's own, like refreshing and closing are, and what they

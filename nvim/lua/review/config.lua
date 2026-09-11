@@ -40,7 +40,8 @@ local M = {}
 ---@field annotate_line_long string global key that writes it in the entry of several lines
 ---@field seen_and_open_next string global key that marks what is being read as seen and opens the next one still to read
 ---@field help string key of the panel and of the diff that lists every key of where the reviewer is
----@field report string key that generates the report of the review under way
+---@field report string key that generates the report of the review under way, in XML
+---@field report_markdown string key that generates the same report in markdown
 ---@field graph string key that opens the graph of commits, to review one of them
 ---@field graph_alternate string key that opens the graph the other way
 ---@field branch string key of the graph that restricts it to a branch chosen in a search
@@ -195,8 +196,14 @@ local defaults = {
     -- `gg` still reaches the top: `g?` is not a prefix of it.
     help = "g?",
     -- "R" for "relatório", beside the "r" that refreshes: the two are the
-    -- panel's own keys, about the review and not about a line of it.
+    -- panel's own keys, about the review and not about a line of it. The report
+    -- goes to an agent, and whether it reads tags XML or markdown better is not
+    -- known yet, so both are switched on to be compared in use (ADR-0006): "R"
+    -- writes it in XML, and "M" for "markdown" writes the same report in
+    -- markdown. What "M" shadows is the jump to the middle of the window, in a
+    -- list that is rarely taller than it.
     report = "R",
+    report_markdown = "M",
     -- "c" for "commits", and the pair reads like the diff keys: the plain key
     -- is the graph built beside the panel, the shifted one the gitgraph's
     -- drawing of the same history, both switched on to be compared in use

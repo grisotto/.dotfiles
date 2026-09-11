@@ -277,18 +277,17 @@ end
 ---reviewer is reading. This is the one key of the review that does not come
 ---from a line of the panel: a remark about a line is written where the line is.
 ---
----In the file itself, and not in a side of a diff that is a rev — the two
----sides of a staged diff are both revs, and the line numbers there are the
----index's, not the file's. Annotating a line of a rev is out of the scope of
----the epic; what the reviewer does instead is open the file, which is a key of
----the panel away.
+---In the file itself, or on the side after the change of a diff — the file in
+---the unstaged one, the index in the staged one —, where the line is read in
+---that version. The side before the change, the three versions of a conflict
+---and a rev read on its own say no, and say why.
 ---@param mode ReviewMode the review being made, which is the panel's
 ---@param opts { long: boolean|nil }|nil `long` opens the entry of several lines
 ---@param done fun() redraws the panels, whose counts the annotation changes
 function M.annotate_line(mode, opts, done)
-  local point = annotation.point_under_cursor(mode)
+  local point, refusal = annotation.point_under_cursor(mode)
   if not point then
-    vim.notify("review: só dá para anotar uma linha do arquivo em si; abra-o pelo painel.", vim.log.levels.WARN)
+    vim.notify(refusal, vim.log.levels.WARN)
     return
   end
   annotation.write(point, opts, done)

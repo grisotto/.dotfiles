@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723x3vz0
 title: Anotar no diff de staged
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:05.075930885Z'
-updated: '2026-09-11T01:43:05.210802810Z'
+updated: '2026-09-11T13:34:07.969672753Z'
+closed: '2026-09-11T13:34:07.969672753Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,15 +15,15 @@ tags:
 - review
 acceptance:
 - title: Lado de depois do diff de staged aceita anotação de linha e de trecho
-  done: false
+  done: true
 - title: Ponto guarda a versão; mesma linha no índice e no disco são pontos diferentes
-  done: false
+  done: true
 - title: Anotação do índice é reancorada no disco na geração
-  done: false
+  done: true
 - title: Lado de antes de qualquer diff recusa com aviso; conflito e vista em outro rev continuam recusando
-  done: false
+  done: true
 - title: Ajuda do diff de staged lista as teclas de anotar
-  done: false
+  done: true
 deps:
 - nvi-01m2723w2zb5
 ---
@@ -42,3 +43,9 @@ Veja a spec: "Onde se anota" (43–46, 48, 49, 51) e as decisões "Ponto e vers�
 ## Blocked by
 
 - nvi-01m2723w2zb5
+
+## Notes
+
+**2026-09-11T13:34:07.969672753Z**
+
+Lado de depois do diff de staged anota o índice (versão index, âncora lida do lado); ponto compara a versão, legado do working tree é disco; lado de antes recusa com aviso; ajuda do staged lista as teclas; relatório reancora no disco (já reancorava tudo).

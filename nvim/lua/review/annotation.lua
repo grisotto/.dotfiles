@@ -27,16 +27,24 @@
 ---name of a type in front of the text is the type. Editing brings the prefix
 ---back in front of the text, so changing the type is editing it too.
 local config = require "review.config"
+local diff = require "review.diff"
 local git = require "review.git"
 local root = require "review.root"
 local state = require "review.state"
+local WORKTREE = require("review.mode").WORKTREE
 
 local M = {}
+
+---@alias ReviewAnnotationVersion "disk"|"index" the version of the file a line
+---was read in: the file on disk, or the index
 
 ---@class ReviewPoint what an annotation is attached to
 ---@field root string absolute path of the repository root
 ---@field path string the file, from the repository root
 ---@field mode string the mode of the review it is being written in
+---@field version ReviewAnnotationVersion|nil the version the line was read in; absent on
+---a file annotation, and on a line of the file on disk written in a commit or a
+---range
 ---@field line integer|nil the line, the first of a run of them; absent on a file annotation
 ---@field end_line integer|nil the last line of a run; absent on a point of one line
 ---@field anchor string|nil the text of those lines, one per line; absent on a file annotation
@@ -74,39 +82,78 @@ local function pointed_lines()
   return math.min(other, cursor), math.max(other, cursor)
 end
 
----The point the reviewer is on in the file they are reading: the line the
----cursor is on, or the lines selected, in the repository that file belongs to.
----@param mode ReviewMode the review it is being written in
----@return ReviewPoint|nil nil when this buffer is not a file of a repository
-function M.point_under_cursor(mode)
-  local first, last = pointed_lines()
-  local bufnr = vim.api.nvim_get_current_buf()
-  -- Everything the panel puts on screen that is not the file itself — the
-  -- panel, a side of the diff, the long entry — is a buffer with nothing on
-  -- disk behind it, and there is no line of the repository to tie a remark to
-  -- in one of those.
-  if vim.bo[bufnr].buftype ~= "" then return nil end
+---What the key says on the side before the change of a diff.
+local ON_THE_SIDE_BEFORE =
+  "review: o lado de antes do diff não se anota: o que se anota é o que a mudança passou a ter."
 
-  local file = vim.api.nvim_buf_get_name(bufnr)
-  local directory = file ~= "" and vim.fs.dirname(file) or ""
-  if vim.fn.isdirectory(directory) == 0 then return nil end
+---What the key says anywhere else there is no line of the repository to write
+---on.
+local NOT_A_LINE_OF_THE_FILE = "review: só dá para anotar uma linha do arquivo em si; abra-o pelo painel."
 
-  local repository = git.root(directory)
-  local path = repository and root.relative_to(repository, file)
-  if not repository or not path then return nil end
-
+---The point of lines `first` to `last` of a buffer, read in `version`.
+---@param repository string absolute path of the repository root
+---@param path string the file, from the repository root
+---@param mode ReviewMode
+---@param version ReviewAnnotationVersion|nil
+---@param bufnr integer the buffer the lines are read from
+---@param first integer
+---@param last integer
+---@return ReviewPoint
+local function point_on_lines(repository, path, mode, version, bufnr, first, last)
   return {
     root = repository,
     path = path,
     mode = mode.key,
+    version = version,
     line = first,
     -- A selection of one line is that line: the same point the key pressed
     -- without a selection writes, and so the same remark.
     end_line = M.end_line(first, last),
-    -- The anchor is the lines as they stand right now, which is what the remark
-    -- being written is about (ADR-0003).
+    -- The anchor is the lines as they stand right now, in the buffer the
+    -- reviewer is reading them in, which is what the remark being written is
+    -- about (ADR-0003).
     anchor = table.concat(vim.api.nvim_buf_get_lines(bufnr, first - 1, last, false), "\n"),
   }
+end
+
+---The point the reviewer is on in what they are reading: the line the cursor is
+---on, or the lines selected, of the file on disk or of the side of a diff that
+---takes an annotation.
+---@param mode ReviewMode the review it is being written in
+---@return ReviewPoint|nil nil when there is no line here to annotate
+---@return string|nil refusal what to tell the reviewer, when there is none
+function M.point_under_cursor(mode)
+  local first, last = pointed_lines()
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- A side of a diff says what it is: the side before the change is refused,
+  -- and the side after it is written in the version it shows.
+  local side = diff.side_in(vim.api.nvim_get_current_win())
+  if side then
+    if side.before then return nil, ON_THE_SIDE_BEFORE end
+    if not side.version then return nil, NOT_A_LINE_OF_THE_FILE end
+    return point_on_lines(side.root, side.path, mode, side.version, bufnr, first, last)
+  end
+
+  -- Everything else the panel puts on screen that is not the file itself — the
+  -- panel, the long entry — is a buffer with nothing on disk behind it, and
+  -- there is no line of the repository to tie a remark to in one of those.
+  if vim.bo[bufnr].buftype ~= "" then return nil, NOT_A_LINE_OF_THE_FILE end
+
+  local file = vim.api.nvim_buf_get_name(bufnr)
+  local directory = file ~= "" and vim.fs.dirname(file) or ""
+  if vim.fn.isdirectory(directory) == 0 then return nil, NOT_A_LINE_OF_THE_FILE end
+
+  local repository = git.root(directory)
+  local path = repository and root.relative_to(repository, file)
+  if not repository or not path then return nil, NOT_A_LINE_OF_THE_FILE end
+
+  -- The file on disk is the disk version of the working tree. In a commit or a
+  -- range it is no version of the review at all, and its line is written as it
+  -- was before annotations had a version: without one, so annotating a line
+  -- annotated that way still edits it.
+  local version = mode.key == WORKTREE.key and "disk" or nil
+  return point_on_lines(repository, path, mode, version, bufnr, first, last)
 end
 
 ---The annotations of one review: the ones written in that mode, in the order

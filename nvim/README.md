@@ -139,11 +139,11 @@ Valem em qualquer buffer.
 | `<Leader>gA` | O mesmo, na entrada de várias linhas |
 | `<Leader>gv` | Marca como vista a entrada em que a revisão está e abre o diff da próxima não vista |
 
-As duas de anotação só valem dentro de um arquivo do repositório — não no
-painel, não num lado do diff que é uma versão, não num buffer sem arquivo atrás.
-Nos outros casos elas avisam em vez de anotar. No diff de unstaged o lado da
-direita é o próprio arquivo, e ali elas valem — por isso a ajuda dele (`g?`) as
-lista.
+As duas de anotação valem num arquivo do repositório e no lado de depois — o da
+direita — de um diff: no de unstaged ele é o próprio arquivo, e no de staged é o
+índice. Não valem no painel, no lado de antes de um diff, nas três versões de um
+conflito, na vista em outro rev (`e`) nem num buffer sem arquivo atrás: ali elas
+avisam em vez de anotar. A ajuda do diff (`g?`) as lista onde elas valem.
 
 Selecione linhas (`V`) e aperte `<Leader>ga`: a anotação fica presa ao trecho
 inteiro, a entrada diz `a.txt:2-4`, e o relatório cita todas as linhas dele. Um
@@ -294,11 +294,16 @@ logo depois; fechado o diff, a do heirline volta a valer.
 | `<Leader>gv` | Marca como visto e abre a próxima não vista (a tecla global, listada na ajuda) |
 | `g?` | Mostra todas as teclas do diff, com o que cada uma faz (`q` fecha) |
 
-A ajuda lista `<Leader>ga` e `<Leader>gA` só quando o lado da direita é o
-arquivo do revisor — o diff de unstaged. No de staged os dois lados são versões
-(`HEAD` e índice), assim como as três de um conflito, e ali a anotação seria
-recusada: para anotar, `go` leva ao arquivo. As teclas globais não são do diff,
-e ele não as mapeia nem as tira ao sair.
+A ajuda lista `<Leader>ga` e `<Leader>gA` quando o lado da direita aceita
+anotação: no diff de unstaged, que é o seu arquivo, e no de staged, que é o
+índice. A anotação feita no índice é lida dele — a âncora é o texto do lado
+anotado — e é um ponto diferente da mesma linha no disco; na geração do
+relatório ela é reancorada no disco, como a do arquivo (veja [Anotações e
+reancoragem](#anotações-e-reancoragem)). O lado de antes de qualquer diff — o
+`HEAD` no staged, o índice no unstaged — recusa com um aviso, porque o que se
+anota é o que a mudança passou a ter; as três versões de um conflito também
+recusam, e ali a ajuda não lista as teclas. As teclas globais não são do diff, e
+ele não as mapeia nem as tira ao sair.
 
 As quatro andam pela lista sem voltar a ela: movem o cursor do painel, abrem o
 diff da entrada e deixam o foco no diff, que é onde o revisor está. A ordem é a
@@ -488,9 +493,12 @@ que é o antigo em qualquer rev anterior à renomeação.
 
 ### Anotações e reancoragem
 
-Uma anotação se prende a um ponto: o arquivo, o modo, e a linha quando houver.
-Dois textos escritos no mesmo ponto são um só, corrigido — anotar de novo abre a
-entrada já preenchida, e apagar o texto todo remove a anotação.
+Uma anotação se prende a um ponto: o arquivo, o modo, e a linha ou o trecho
+quando houver, com a versão em que foram lidos — o arquivo no disco, ou o índice
+no diff de staged. A linha 5 do índice e a linha 5 do disco são pontos
+diferentes, porque são linhas diferentes. Dois textos escritos no mesmo ponto
+são um só, corrigido — anotar de novo abre a entrada já preenchida, e apagar o
+texto todo remove a anotação.
 
 Toda anotação tem um tipo, que diz ao agente o que você está pedindo com ela. Ao
 anotar — uma linha, um trecho ou o arquivo, na entrada curta ou na longa — o
@@ -546,6 +554,11 @@ vez de ser descartada ou de apontar para a linha errada. Guardar só o
 número faria a anotação apontar para o lugar errado depois de qualquer edição
 acima dela, e extmarks resolveriam isso só enquanto o buffer estivesse aberto —
 anotações precisam sobreviver a fechar o editor.
+
+A anotação feita no índice é reancorada no disco do mesmo jeito: é o disco que
+o agente edita, e a linha que o relatório cita é a do arquivo, achada pelo texto
+lido no índice. Quando esse texto não está no disco, ela sai não encontrada. Uma
+anotação do working tree gravada antes de haver versão conta como do disco.
 
 A anotação de um trecho guarda a primeira e a última linha, e a âncora dela é o
 texto de todas. Ela é reancorada inteira: as linhas têm que estar juntas e na
@@ -825,7 +838,12 @@ atualização do ADR-0009.
    todo remove a anotação. `A` e `<Leader>gA` passam pelo mesmo seletor e abrem
    a entrada de várias linhas, com o tipo na borda. No arquivo, `V` e `2j` e
    `<Leader>ga`: a entrada diz `:N-M`, e o modo visual já saiu. Com `<CR>` num
-   arquivo unstaged, `g?` no diff lista `<Leader>ga`; num staged, não. Com um
+   arquivo unstaged ou staged, `g?` no diff lista `<Leader>ga`; nas três versões
+   de um conflito (`D`), não. No diff de staged, `<Leader>ga` na linha 2 do lado
+   da direita anota o índice; `o` e `<Leader>ga` na linha 2 do arquivo é outra
+   anotação, e as duas convivem. Insira uma linha acima no disco, salve e gere o
+   relatório: a do índice sai na linha 3, com o texto dela. `<Leader>ga` no lado
+   da esquerda de qualquer diff avisa que o lado de antes não se anota. Com um
    `annotation_types` em `lua/polish.lua`, o tipo novo aparece no fim do
    seletor, e o que troca a instrução de um existente aparece com a nova.
    Com `annotation_type_entry = "prefix"`, `<Leader>ga` abre a entrada direto,

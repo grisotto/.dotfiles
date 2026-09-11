@@ -11,6 +11,8 @@
 ---on every mark. It is a small file, and reading it is what makes the panel of
 ---a second editor — or of the same one, reopened — show what was marked
 ---elsewhere instead of a stale copy of it.
+local WORKTREE = require("review.mode").WORKTREE
+
 local M = {}
 
 ---The schema of the document written here. A document of any other version is
@@ -23,6 +25,10 @@ local M = {}
 ---which is what a review that never wrote one looks like anyway. Bumping would
 ---throw away the seen marks of every review under way to announce a field
 ---whose absence already reads correctly.
+---
+---The version of the line an annotation was read in went in the same way: a
+---line written before it has none, and in the working tree reads as the file on
+---disk, which was the only place a line could be annotated then.
 local VERSION = 1
 
 ---@return string directory the documents live in
@@ -48,6 +54,9 @@ end
 ---@field line integer|nil the line it is tied to, the first of a run of them;
 ---absent on a file annotation
 ---@field end_line integer|nil the last line of a run; absent on a line alone
+---@field version ReviewAnnotationVersion|nil the version the line was read in;
+---absent on a file annotation, and on a line written before annotations had a
+---version, which in the working tree was the file on disk
 ---@field anchor string|nil the text of those lines when it was written, one per
 ---line (ADR-0003)
 ---@field type string|nil what the reviewer asks the agent for with it; absent on
@@ -122,17 +131,30 @@ function M.toggle(root, content, path)
   return seen
 end
 
+---The version the line of an annotation was read in. One on a line of the
+---working tree written before annotations had a version was written on the
+---file itself, which is the only place a line could be annotated then.
+---@param annotation ReviewAnnotation|ReviewPoint
+---@return ReviewAnnotationVersion|nil nil on a file annotation, and on a line of
+---a commit or a range written without a version
+local function version_of(annotation)
+  if annotation.version or not annotation.line then return annotation.version end
+  if annotation.mode == WORKTREE.key then return "disk" end
+end
+
 ---Whether an annotation is the one written at `point`: the same file, in the
----same mode, on the same lines — where no line at all is the file annotation,
----of which there is one per file and mode. A run of lines is another point than
----its first line alone: the remark about a passage is not the remark about one
----line of it.
+---same mode, read in the same version, on the same lines — where no line at all
+---is the file annotation, of which there is one per file and mode. Line 5 of the
+---index is another point than line 5 of the disk, because they are different
+---lines. A run of lines is another point than its first line alone: the remark
+---about a passage is not the remark about one line of it.
 ---@param annotation ReviewAnnotation
 ---@param point ReviewPoint
 ---@return boolean
 local function is_at(annotation, point)
   return annotation.path == point.path
     and annotation.mode == point.mode
+    and version_of(annotation) == version_of(point)
     and annotation.line == point.line
     and annotation.end_line == point.end_line
 end
@@ -177,6 +199,7 @@ function M.annotate(point, text, kind)
     kept[#kept + 1] = {
       path = point.path,
       mode = point.mode,
+      version = point.version,
       line = point.line,
       end_line = point.end_line,
       anchor = point.anchor,

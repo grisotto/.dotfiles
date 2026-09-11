@@ -6,6 +6,7 @@ local entry = require "tests.helpers.entry"
 local fixture = require "tests.helpers.fixture"
 local help = require "tests.helpers.help"
 local input = require "tests.helpers.input"
+local notify = require "tests.helpers.notify"
 local panel = require "tests.helpers.panel"
 local review = require "review"
 local visual = require "tests.helpers.visual"
@@ -43,6 +44,35 @@ local function repo_with_a_change()
   return repo
 end
 
+---A repository with one file staged and changed again on disk, one line above
+---the staged change: line 2 of the index is line 3 of the disk, and line 2 of
+---the disk is a line the index does not have.
+---@return FixtureRepo
+local function repo_with_a_staged_change()
+  local repo = fixture.repo()
+  repo:commit_file("a.txt", "um\ndois\ntrês\n")
+  repo:write("a.txt", "um\ndois staged\ntrês\n")
+  repo:add "a.txt"
+  repo:write("a.txt", "zero\num\ndois staged\ntrês\n")
+  return repo
+end
+
+---Read the diff of an entry the way the reviewer does — `<CR>` on its line —
+---and put the cursor on `line` of one side of it: the right one, which is the
+---side after the change, unless `side` says otherwise.
+---@param section string e.g. "Staged"
+---@param pattern string a Lua pattern matching the entry
+---@param line integer
+---@param side "left"|"right"|nil
+local function read_diff(section, pattern, line, side)
+  panel.focus(section, pattern)
+  panel.feed "<CR>"
+  local wins = diff.windows()
+  local win = assert(side == "left" and wins[1] or wins[#wins], "o diff não abriu")
+  vim.api.nvim_set_current_win(win)
+  vim.api.nvim_win_set_cursor(win, { line, 0 })
+end
+
 ---Select lines `first` to `last` of the file being read and press the key that
 ---annotates on them — the real one, which `review.setup` maps.
 ---@param first integer
@@ -66,6 +96,7 @@ describe("anotação", function()
   after_each(function()
     input.restore()
     confirm.restore()
+    notify.restore()
     editor.reset()
     vim.cmd.cd(vim.fn.fnameescape(config_root))
     fixture.cleanup()
@@ -267,6 +298,189 @@ describe("anotação", function()
     end)
   end)
 
+  describe("no diff de staged", function()
+    it("anota a linha no lado de depois, o índice, com a âncora lida dele", function()
+      local repo = repo_with_a_staged_change()
+
+      open_in(repo.root)
+      read_diff("Staged", "a%.txt", 2)
+      input.answer "no índice"
+      review.annotate()
+
+      assert.same({ "issue em a.txt:2: " }, input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("a.txt", annotations[1].path)
+      assert.equals("worktree", annotations[1].mode)
+      assert.equals("index", annotations[1].version)
+      assert.equals(2, annotations[1].line)
+      assert.equals("dois staged", annotations[1].anchor)
+      assert.equals("no índice", annotations[1].text)
+    end)
+
+    it("anota o trecho no lado de depois, com todas as linhas dele no índice", function()
+      local repo = repo_with_a_staged_change()
+
+      open_in(repo.root)
+      read_diff("Staged", "a%.txt", 1)
+      input.answer "estas duas andam juntas"
+      annotate_selection(1, 2)
+
+      assert.same({ "issue em a.txt:1-2: " }, input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("index", annotations[1].version)
+      assert.same({ 1, 2 }, { annotations[1].line, annotations[1].end_line })
+      assert.equals("um\ndois staged", annotations[1].anchor)
+    end)
+
+    it("é outro ponto que a mesma linha do arquivo no disco", function()
+      -- A linha 2 do índice e a linha 2 do disco são linhas diferentes: anotar
+      -- uma não edita a outra.
+      local repo = repo_with_a_staged_change()
+
+      open_in(repo.root)
+      read_diff("Staged", "a%.txt", 2)
+      input.answer "no índice"
+      review.annotate()
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "no disco"
+      review.annotate()
+      read_diff("Staged", "a%.txt", 2)
+      input.answer "no índice, corrigida"
+      review.annotate()
+
+      assert.same({ "", "", "no índice" }, input.defaults())
+      local annotations = document.annotations()
+      assert.equals(2, #annotations)
+      local by_version = {}
+      for _, written in ipairs(annotations) do
+        by_version[written.version] = written
+      end
+      assert.equals("no índice, corrigida", by_version.index.text)
+      assert.equals("dois staged", by_version.index.anchor)
+      assert.equals("no disco", by_version.disk.text)
+      assert.equals("um", by_version.disk.anchor)
+    end)
+
+    it("conta a anotação do working tree gravada sem versão como a do disco", function()
+      local repo = repo_with_a_staged_change()
+
+      open_in(repo.root)
+      -- A anotação legada é plantada num documento que já existe, e é anotar
+      -- alguma coisa que o faz existir.
+      panel.focus("Unstaged", "a%.txt")
+      input.answer "o arquivo todo"
+      panel.feed "a"
+      document.plant {
+        path = "a.txt",
+        mode = "worktree",
+        line = 2,
+        anchor = "um",
+        text = "antiga, sem versão",
+        at = "2026-01-01T00:00:00Z",
+      }
+      read_diff("Staged", "a%.txt", 2)
+      input.answer "no índice"
+      review.annotate()
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "antiga, corrigida"
+      review.annotate()
+
+      assert.same({ "", "", "antiga, sem versão" }, input.defaults())
+      local on_lines = vim.tbl_filter(function(written) return written.line ~= nil end, document.annotations())
+      assert.equals(2, #on_lines)
+      local texts = vim.tbl_map(function(written) return written.version .. " " .. written.text end, on_lines)
+      table.sort(texts)
+      assert.same({ "disk antiga, corrigida", "index no índice" }, texts)
+    end)
+  end)
+
+  describe("onde a anotação de linha é recusada", function()
+    before_each(function() notify.install() end)
+
+    ---Press the key that annotates where the cursor is, and assert it said no:
+    ---nothing asked — the search that opened a rev asked before it —, nothing
+    ---written, and the warning about why.
+    ---@param said string a Lua pattern of the warning
+    local function assert_refused(said)
+      local asked_before = #confirm.prompts()
+      input.answer "não tem onde prender isto"
+      review.annotate()
+
+      assert.equals(asked_before, #confirm.prompts())
+      assert.same({}, input.prompts())
+      assert.same({}, vim.tbl_filter(function(written) return written.line ~= nil end, document.annotations()))
+      assert.matches(said, notify.last())
+    end
+
+    it("no lado de antes do diff de staged, que é o HEAD", function()
+      local repo = repo_with_a_staged_change()
+
+      open_in(repo.root)
+      read_diff("Staged", "a%.txt", 2, "left")
+
+      assert_refused "lado de antes"
+    end)
+
+    it("no lado de antes do diff de unstaged, que é o índice", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_diff("Unstaged", "a%.txt", 2, "left")
+
+      assert_refused "lado de antes"
+    end)
+
+    it("no lado de antes da comparação com outro rev, e não no arquivo ao lado dele", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      confirm.answer "main"
+      panel.feed "E"
+      local wins = diff.windows()
+      vim.api.nvim_set_current_win(wins[1])
+      vim.api.nvim_win_set_cursor(wins[1], { 1, 0 })
+      assert_refused "lado de antes"
+
+      confirm.answer_matching "^issue "
+      vim.api.nvim_set_current_win(wins[2])
+      vim.api.nvim_win_set_cursor(wins[2], { 2, 0 })
+      input.answer "o arquivo aceita"
+      review.annotate()
+      assert.equals("disk", document.annotations()[1].version)
+    end)
+
+    it("nas três versões de um conflito", function()
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+
+      local wins = diff.windows()
+      assert.equals(3, #wins)
+      for _, win in ipairs(wins) do
+        vim.api.nvim_set_current_win(win)
+        assert_refused "arquivo em si"
+      end
+    end)
+
+    it("na vista do arquivo em outro rev", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      confirm.answer "main"
+      panel.feed "e"
+
+      assert.is_true(diff.is_side(vim.api.nvim_buf_get_name(0)))
+      assert_refused "arquivo em si"
+    end)
+  end)
+
   describe("na ajuda do diff", function()
     it("lista as teclas de anotar quando o lado da direita é o arquivo do revisor", function()
       local repo = repo_with_a_change()
@@ -281,9 +495,7 @@ describe("anotação", function()
       assert.matches("várias linhas", keys["<Leader>gA"])
     end)
 
-    it("não oferece anotar num diff em que os dois lados são versões", function()
-      -- No staged os dois lados são o HEAD e o índice: a anotação ali seria
-      -- recusada, e uma tecla oferecida para ser recusada é pior que nenhuma.
+    it("lista as teclas de anotar no diff de staged, cujo lado da direita é o índice", function()
       local repo = repo_with_a_change()
       repo:add "a.txt"
 
@@ -293,6 +505,23 @@ describe("anotação", function()
       diff.feed "g?"
 
       local keys = help.keys()
+      assert.matches("^Anotar a linha", keys["<Leader>ga"])
+      assert.matches("várias linhas", keys["<Leader>gA"])
+    end)
+
+    it("não oferece anotar nas três versões de um conflito", function()
+      -- A anotação ali seria recusada, e uma tecla oferecida para ser recusada é
+      -- pior que nenhuma.
+      local repo = fixture.repo()
+      repo:conflict "conflito.txt"
+
+      open_in(repo.root)
+      panel.focus("Conflitos", "conflito%.txt")
+      panel.feed "D"
+      diff.feed "g?"
+
+      local keys = help.keys()
+      assert.is_not_nil(keys["<Leader>gv"])
       assert.is_nil(keys["<Leader>ga"])
       assert.is_nil(keys["<Leader>gA"])
     end)

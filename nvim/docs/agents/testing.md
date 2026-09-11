@@ -396,6 +396,16 @@ padrão. O que se afirma é o preâmbulo lido de volta dos dois formatos
 (`report.instructions`): os marcadores preenchidos, o desconhecido como está e o
 embutido sem arquivo.
 
+Anotar no diff de staged (`nvi-01m2723x3vz0`) não trouxe item novo: o cursor vai
+a um lado do diff pelo terceiro item (`diff.windows`, o da direita ou o da
+esquerda), a tecla é a de sempre, e o que se afirma é a versão e a âncora
+gravadas no documento de estado (nono), o que o relatório cita depois de
+reancorar no disco (décimo), as teclas que a ajuda do diff lista e o aviso da
+recusa (décimo quarto). A recusa não muda tela nenhuma: sem o aviso, o teste não
+distinguiria a tecla que recusou da tecla que não fez nada. A anotação do
+working tree gravada antes de haver versão é plantada no documento
+(`document.plant`), como a de outro modo.
+
 `tests/helpers/menu.lua` lê o menu de contexto do editor: `menu.entries()` devolve
 as entradas na ordem em que aparecem, `menu.actions()` só as que têm ação e
 atalho, na forma tecla → ação, e `menu.choose` escolhe uma pelo texto, que é o

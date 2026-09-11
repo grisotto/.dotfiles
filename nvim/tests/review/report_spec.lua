@@ -1,5 +1,6 @@
 local clipboard = require "tests.helpers.clipboard"
 local confirm = require "tests.helpers.confirm"
+local diff = require "tests.helpers.diff"
 local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local entry = require "tests.helpers.entry"
@@ -319,6 +320,43 @@ describe("relatório de revisão", function()
       for _, format in ipairs { "xml", "markdown" } do
         assert.is_nil(report.path(format):find(repo.root, 1, true))
       end
+    end)
+
+    it("reancora no disco a anotação feita no índice, e a dá como não encontrada sem o texto lá", function()
+      -- É o disco que o agente edita: a linha 2 do índice está na linha 3 do
+      -- arquivo, e é essa que o relatório cita.
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\ndois\ntrês\n")
+      repo:write("a.txt", "um\ndois staged\ntrês\n")
+      repo:add "a.txt"
+      repo:write("a.txt", "zero\num\ndois staged\ntrês\n")
+
+      open_in(repo.root)
+      panel.focus("Staged", "a%.txt")
+      panel.feed "<CR>"
+      local index_side = assert(diff.right(), "o diff não abriu")
+      vim.api.nvim_set_current_win(index_side)
+      vim.api.nvim_win_set_cursor(index_side, { 2, 0 })
+      input.answer "no índice"
+      review.annotate()
+      panel.focus("Staged", "a%.txt")
+
+      generate_both_and_expect_items {
+        {
+          id = 1,
+          type = "issue",
+          file = "a.txt",
+          lines = "3",
+          code = { "dois staged" },
+          text = "no índice",
+          not_found = false,
+        },
+      }
+
+      repo:write("a.txt", "zero\num\ndois no disco\ntrês\n")
+      generate_both_and_expect_items {
+        { id = 1, type = "issue", file = "a.txt", code = { "dois staged" }, text = "no índice", not_found = true },
+      }
     end)
 
     it("contém apenas as anotações do modo atual", function()

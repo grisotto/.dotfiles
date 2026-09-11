@@ -31,6 +31,9 @@ local M = {}
 ---@field rev string|nil rev to read the content from; nil is the file on disk
 ---@field path string path relative to the repository root
 ---@field lines string[]|nil the content, when it was already read
+---@field version ReviewAnnotationVersion|nil which version of the file the side is, as an
+---annotation written on it records it; nil on a version the report does not
+---find again
 
 ---@class ReviewDiffKey an action of the diff, written in the winbar beside what
 ---it does and mapped in every one of its buffers
@@ -44,6 +47,8 @@ local M = {}
 
 ---@class ReviewDiffMount what one diff put on the screen, and everything that
 ---has to be given back when it leaves
+---@field root string absolute path of the repository root the sides are read from
+---@field sides ReviewDiffSide[] what each window shows, left to right
 ---@field wins integer[] winids, left to right
 ---@field bufs integer[] the buffer of each side, left to right
 ---@field entry ReviewEntry|nil the line of the list this diff is of, when it is
@@ -118,14 +123,14 @@ local function two_way_sides(entry)
     }
   end
 
-  local index = { label = "índice", rev = ":0", path = entry.path }
+  local index = { label = "índice", rev = ":0", path = entry.path, version = "index" }
   if entry.section == "staged" then
     -- A renamed file has its old content under the old path in HEAD.
     return { label = "HEAD", rev = "HEAD", path = entry.orig_path or entry.path }, index
   end
   -- Unstaged and untracked read the same way: what the index has of the file —
   -- nothing at all, for an untracked one — against what is on disk.
-  return index, { label = "working tree", rev = nil, path = entry.path }
+  return index, { label = "working tree", rev = nil, path = entry.path, version = "disk" }
 end
 
 ---The name of a side that came from git: the file where it lives, with the rev
@@ -537,7 +542,17 @@ local function build(target, sides, focused_side, keys, entry)
   local mapped = vim.tbl_filter(function(key) return key.run ~= nil end, keys)
 
   ---@type ReviewDiffMount
-  local mount = { wins = opened, bufs = bufs, winbar = {}, bars = {}, keys = mapped, mappings = {}, entry = entry }
+  local mount = {
+    root = target.root,
+    sides = sides,
+    wins = opened,
+    bufs = bufs,
+    winbar = {},
+    bars = {},
+    keys = mapped,
+    mappings = {},
+    entry = entry,
+  }
   local tab = vim.api.nvim_get_current_tabpage()
   -- A diff on the screen is the diff to come back to, so whatever way back a
   -- file of this tabpage was holding is over — including the one this very
@@ -832,6 +847,22 @@ local function opening_key(target)
   }
 end
 
+---The version an annotation written on side `index` of a diff is written in, and
+---nil on a side that takes none.
+---
+---Only the side after the change takes one — the right one of a comparison of
+---two —, because what is annotated is what the change came to have, and never
+---what it took away. And only a side the report knows how to find again: the
+---file on disk and the index. The three versions of a conflict are not a
+---comparison of two, and a rev read on its own is a consultation.
+---@param sides ReviewDiffSide[] left to right
+---@param index integer
+---@return ReviewAnnotationVersion|nil
+local function annotated_as(sides, index)
+  if #sides ~= 2 or index ~= 2 then return nil end
+  return sides[2].version
+end
+
 ---The global keys of the review that work from inside the diff: the pair that
 ---annotates the line being read, or the run of lines selected in it, and the
 ---one that marks it as seen and opens the next one still to read.
@@ -895,10 +926,10 @@ end
 ---walking it whether the file is conflicted or not.
 ---
 ---The keys that annotate are named only when the side on the right — where the
----eye ends up — is the reviewer's own file. An
----annotation is written on the file itself, and on a side that is a rev — both
----sides of a staged diff, every version of a conflict — the key is refused: a
----key offered to be refused is worse than no key at all.
+---eye ends up — takes an annotation: the file itself in the unstaged diff, and
+---the index in the staged one. On a side that takes none — every version of a
+---conflict — the key is refused, and a key offered to be refused is worse than
+---no key at all.
 ---
 ---What a rev is read or compared in does not get any of them: those are
 ---consultations of one file, where the key that matters is the one that gives
@@ -912,7 +943,7 @@ local function reviewing_keys(target, sides)
     vim.list_extend(vim.list_extend({ closing_key() }, { opening_key(target) }), changing_keys()),
     stepping_keys()
   )
-  vim.list_extend(keys, global_keys(sides[#sides].rev == nil))
+  vim.list_extend(keys, global_keys(annotated_as(sides, #sides) ~= nil))
   -- Beside the way out, where the winbar writes them together.
   table.insert(keys, 2, helping_key(function() return keys end))
   return keys
@@ -974,6 +1005,36 @@ end
 function M.is_line_diff(win)
   local _, mount = mount_of(win)
   return mount ~= nil and mount.line_diff == true
+end
+
+---@class ReviewShownSide what a window of a diff is showing, as the key that
+---annotates asks it
+---@field root string absolute path of the repository root
+---@field path string the file, from the repository root
+---@field version ReviewAnnotationVersion|nil the version an annotation written on this
+---side is written in; nil on a side that takes none
+---@field before boolean whether it is the side before the change: the left one of
+---a comparison of two
+
+---What a window is showing of the diff it is a side of.
+---
+---Asked of the window and of the buffer still in it: a side given another
+---buffer is being let go, and what it shows now is the reviewer's own.
+---@param win integer winid
+---@return ReviewShownSide|nil nil when the window is not showing a side of a diff
+function M.side_in(win)
+  local _, mount = mount_of(win)
+  if not mount then return nil end
+  for index, side_win in ipairs(mount.wins) do
+    if side_win == win and vim.api.nvim_win_get_buf(win) == mount.bufs[index] then
+      return {
+        root = mount.root,
+        path = mount.sides[index].path,
+        version = annotated_as(mount.sides, index),
+        before = #mount.sides == 2 and index == 1,
+      }
+    end
+  end
 end
 
 ---The three versions git is holding for a conflicted path: a side each, short
@@ -1047,7 +1108,7 @@ function M.open_against(target, rev)
   -- both of its versions are history, and what is on disk today is not what the
   -- line is showing. It is also a file that may not be there at all any more.
   local current = entry.rev and { label = short(entry.rev), rev = entry.rev, path = entry.path }
-    or { label = "working tree", rev = nil, path = entry.path }
+    or { label = "working tree", rev = nil, path = entry.path, version = "disk" }
 
   build(target, {
     -- A rev that has the file under neither name is an empty side, which is

@@ -1,37 +1,45 @@
 ---
 id: nvi-01m28w0y5hnv
 title: Configuração de plugins correta no AstroNvim v6
-status: open
+status: closed
 type: chore
 priority: 2
 mode: afk
 created: '2026-09-11T18:35:05.249357336Z'
-updated: '2026-09-11T18:35:13.211158461Z'
+updated: '2026-09-11T19:01:04.797657245Z'
+closed: '2026-09-11T19:01:04.797657245Z'
 assignee: grisotto
 tags:
 - migracao
 - v6
 acceptance:
 - title: <Leader>p cola, medido por maparg nos modos normal e visual
-  done: false
+  done: true
 - title: Todo lado esquerdo do spec do AstroCore na grafia do :h keycodes
-  done: false
+  done: true
 - title: Grupo gm nomeado por desc, com o caminho desc -> group exercitado
-  done: false
+  done: true
 - title: blink.cmp e blink.compat sob o dono novo, completamento do Conjure intacto
-  done: false
+  done: true
 - title: vim-jack-in e as duas dependencias fora do spec, do lock e do disco
-  done: false
+  done: true
 - title: Arquivo do plugin removido no v6 apagado e plugin orfao limpo do disco
-  done: false
+  done: true
 - title: README descreve a instalacao por symlink que existe de fato
-  done: false
+  done: true
 - title: make lint em 0/0/0 e make test sem falha nem erro
-  done: false
+  done: true
 - title: Aviso de colisao do checkhealth explicado em comentario, com a causa
-  done: false
+  done: true
 links:
 - nvi-01m28t7sxfk9
+external_refs:
+- git:4350afc
+- git:eec393a
+- git:4b06e5e
+- git:6828170
+- git:9cd89fe
+- git:fa337c9
 ---
 
 ## Problem Statement
@@ -120,3 +128,9 @@ O escopo é correção contra o v6. O que a configuração do NvChad tinha e o v
 - Versões em que isto foi medido: AstroNvim v6.1.0, Neovim v0.12.2. O `:checkhealth vim.deprecated` já vinha limpo antes e continua — não havia dívida de API, só de configuração.
 - O salto do NvChad para o v6 foi um commit só, e por isso o "antes" desta configuração não está em backup nenhum: está no git. O conteúdo original de qualquer peça se recupera pelo commit anterior a ele.
 - A não-determinismo do `normalize_mappings` vale como aviso para qualquer mapeamento futuro: se o `:checkhealth astrocore` começar a acusar uma tecla nova, a pergunta certa é "quem escreveu a outra grafia", não "qual mapeamento está errado".
+
+## Notes
+
+**2026-09-11T19:01:04.797657245Z**
+
+Entregue na branch astrovim6, em seis commits (4350afc..fa337c9). <Leader>p cola, grupo gm nomeado por desc, grafias na forma do :h keycodes, blink.cmp sob saghen/, vim-jack-in e .neoconf.json fora, README descrevendo o symlink. make lint 0/0/0 e make test 371 Success / 0 Failed / 0 Errors. O aviso de colisao em <C-Up>/<C-up> fica, documentado com a causa e medido como intermitente (2 de 8 partidas); o conserto e um PR ao astrocommunity, listado em Out of Scope junto com o inventario do NvChad (nvi-01m28t7sxfk9).

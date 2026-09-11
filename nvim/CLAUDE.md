@@ -16,6 +16,13 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (created lazily as n
 
 `make test` runs the suite in headless Neovim (plenary busted). See `docs/agents/testing.md` for the single seam and the fixture helpers.
 
+### Documentação do Neovim
+
+Antes de decidir com base numa API, função, opção, evento ou comportamento de
+plugin do Neovim, consulte a documentação da versão instalada — a do runtime ou
+a do plugin, achada pelo arquivo `tags` — e o código do plugin quando a
+documentação não responder. Veja `docs/agents/neovim-docs.md`.
+
 ### Depurar o que só acontece no editor do revisor
 
 Suíte verde e "não funciona aqui" convivem: a sessão do revisor tem estado que a

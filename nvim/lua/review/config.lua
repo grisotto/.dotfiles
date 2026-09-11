@@ -60,6 +60,7 @@ local M = {}
 ---@field width integer width of the panel in columns
 ---@field seen_display "section"|"dimmed" where a file marked as seen is shown
 ---@field preview boolean whether the panel starts with the diff following its cursor
+---@field close_on_diff boolean whether going into the diff of a line takes the panel off the screen
 ---@field neo_tree "close"|"ignore" what to do with a neo-tree window in the way
 ---@field report_directory string|nil where the review report is written
 ---@field mappings ReviewMappings
@@ -88,6 +89,18 @@ local defaults = {
   -- they start reading for real — which is why it is a key and not only this
   -- option (ADR-0006). This is the state the panel of a tabpage opens in.
   preview = false,
+  -- Off, because the panel is where every action of the review starts from, and
+  -- a list that leaves the screen on its own is one the reviewer has to call
+  -- back. On, going into the diff of a line — the key that opens it, or the
+  -- focus arriving at a diff the preview drew — gives the diff the whole width,
+  -- and the key that closes the diff brings the list back. The review walks with
+  -- the list off screen either way (ADR-0009).
+  --
+  -- An option and not a key, unlike the presentations of a diff: it does not
+  -- choose between two ways to read a file, it chooses who takes the list off
+  -- the screen — and a key for that would be one more gesture before every file
+  -- read, which is what the option is there to spare (ADR-0006).
+  close_on_diff = false,
   neo_tree = "close",
   mappings = {
     close = "q",
@@ -237,6 +250,11 @@ local function validate(options)
   -- cursor without the reviewer having asked for it.
   if type(options.preview) ~= "boolean" then
     error(("review: preview must be a boolean, got %s"):format(tostring(options.preview)))
+  end
+  -- The same silence as the preview's: anything that is not `false` would read
+  -- as on, and the list would leave the screen without the reviewer asking.
+  if type(options.close_on_diff) ~= "boolean" then
+    error(("review: close_on_diff must be a boolean, got %s"):format(tostring(options.close_on_diff)))
   end
   -- A typo here would be silent otherwise: any value that is not "close" reads
   -- as "ignore", so the panel would just quietly stop making room for itself.

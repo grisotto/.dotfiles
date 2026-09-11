@@ -171,6 +171,9 @@ Locais ao buffer do painel, e sempre sobre a linha onde o cursor está.
 | `r` | Relê o git e redesenha |
 | `q` | Fecha o painel |
 
+A winbar do painel escreve `ver todas as teclas  g?`: as teclas são demais para
+uma barra da largura da lista, e a que lista todas elas cabe.
+
 O `<Space>` é o Leader desta configuração, e por isso é a única tecla do painel
 que espera o `timeoutlen` antes de agir: os comandos de `<Leader>` continuam
 valendo com o cursor na lista, que é onde o revisor mais fica.
@@ -200,6 +203,23 @@ no meio da revisão é tecla.
 Ligar desenha logo o que está sob o cursor, que é a resposta à tecla. Desligar
 deixa a tela como está — quem desliga achou o que procurava — e por isso diz em
 voz alta que desligou: com o diff ainda ali, nada mais na tela contaria.
+
+### O painel sai da tela ao ler
+
+Com `close_on_diff = true` (ligado em `lua/polish.lua`), entrar no diff de uma
+linha tira o painel da tela e dá ao diff a largura inteira do editor: o `<CR>`
+num arquivo, e também pular para o diff que o preview desenhou (`<C-w>l`, um
+clique). Varrer a lista com o preview ligado não esconde nada — o diff é
+desenhado sem o foco sair dela. As três versões de um conflito (`D`) e o arquivo
+em outro rev (`e`, `E`) mantêm a lista, que é o motivo de existirem.
+
+A revisão continua andando com a lista fora da tela (`]f`, `]c`, `<Leader>gv`).
+O `q` do diff fecha o diff e traz de volta a lista que a entrada no diff tirou:
+com a largura dela, ao lado do que o diff deixou na aba (o seu arquivo, no diff
+de unstaged), e com o cursor no arquivo que estava sendo lido. A lista que você
+fechou por conta própria (`q` no painel, `<Leader>r`) continua fechada, e
+`<Leader>r` a traz a qualquer momento. Por que é opção e não tecla, e por que a
+lista volta depois de o diff sair, estão nas atualizações dos ADRs 0006 e 0009.
 
 ### Descartar
 
@@ -585,6 +605,12 @@ A exceção é como um arquivo visto é desenhado (`seen_display`, em
 esmaecido onde ele está. Ali as duas apresentações não podem coexistir na tela ao
 mesmo tempo, então elas são uma opção — e não duas teclas.
 
+A outra é o painel sair da tela ao ler (`close_on_diff`): ela não escolhe entre
+duas apresentações a comparar, e sim quem tira a lista da tela — você, com `q`
+ou `<Leader>r`, que continuam valendo, ou também a entrada no diff. Como tecla,
+seria um gesto a mais antes de cada arquivo lido, que é o que ela poupa
+(atualização do ADR-0006).
+
 O porquê de cada decisão acima está em [`docs/adr/`](docs/adr/) — a ida ao
 arquivo e a volta por ela são o ADR-0010, e as duas escalas do laço estão na
 atualização do ADR-0009.
@@ -602,7 +628,9 @@ atualização do ADR-0009.
    e `p` de novo liga desenhando logo o da linha do cursor. `g?` na lista e
    dentro do diff abre a janela com todas as teclas de onde se está; `q` fecha e
    devolve o cursor. A winbar do diff escreve só `fechar q` e `ajuda g?`, e
-   continua inteira num diff estreito.
+   continua inteira num diff estreito. Com `close_on_diff` ligado, o `<CR>`
+   esconde a lista e o `q` no diff a traz de volta; com o preview ligado, descer
+   a lista não esconde nada, e `<C-w>l` para dentro do diff esconde.
 3. **Conflito** — num repositório com merge conflitado, as três teclas na linha
    do conflito: `<CR>` (merge tool), `d` (com a versão base) e `D` (as três
    versões ao lado do painel, sem trocar de aba). Depois de `D`, `<CR>` em outra

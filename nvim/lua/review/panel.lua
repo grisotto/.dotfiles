@@ -77,6 +77,8 @@ local MESSAGES = {
 ---@field oldest string|nil the other end when what is listed is a range of
 ---commits: the oldest of it, with `rev` the newest
 ---@field mode ReviewMode the review the annotations and the report are of
+---@field hidden_for_diff boolean|nil whether `close_on_diff` took the list off
+---the screen, which is the list the key that closes the diff brings back
 ---@field entry_by_line table<integer, ReviewEntry> 1-indexed, only entry lines
 ---@field order ReviewEntry[] every entry listed, in the order the review goes in
 ---@field seen_collapsed boolean whether the Vistos section is showing its files
@@ -1304,6 +1306,15 @@ function M.help()
   require("review.help").open("Teclas do painel", keys, config.options.mappings.help)
 end
 
+---The winbar of the panel's window: the key that lists every key of the panel,
+---with what it does, the way the winbar of the diff writes its keys. The keys of
+---the panel are too many for a bar as wide as the list, and the one that lists
+---them fits.
+---@return string
+local function help_bar()
+  return window.bar("", { { label = "ver todas as teclas", key = config.options.mappings.help } })
+end
+
 ---Put the panel's actions where the reviewer reaches them: the keys of its
 ---buffer and the entries of the context menu.
 ---
@@ -1318,6 +1329,15 @@ end
 local function apply_actions(panel)
   local keys, offered = offered_in(panel)
   apply_mappings(panel, keys)
+  -- With the keys and at the same moment, for the same reason as the menu: the
+  -- key the bar names is the key that is mapped.
+  if
+    panel.winid
+    and vim.api.nvim_win_is_valid(panel.winid)
+    and vim.api.nvim_win_get_buf(panel.winid) == panel.bufnr
+  then
+    vim.wo[panel.winid].winbar = help_bar()
+  end
   if vim.api.nvim_get_current_buf() == panel.bufnr then menu.install(offered) end
 end
 
@@ -1401,6 +1421,10 @@ local function open_win(panel)
   for name in pairs(WINDOW_OPTIONS) do
     panel.window_options[name] = vim.wo[splitting][name]
   end
+  -- The winbar is the editor's, and not the window being split: that one can be
+  -- a side of a diff, whose bar is the diff's and would come back over an empty
+  -- window.
+  panel.window_options.winbar = vim.go.winbar
 
   opening = panel.bufnr
   local ok, win = pcall(vim.api.nvim_open_win, panel.bufnr, true, {
@@ -1521,6 +1545,9 @@ end
 ---directory. Opening an already open panel focuses it and re-reads git.
 function M.open()
   local panel = surface()
+  -- On screen again, whoever brought it: from here on, a list that leaves is
+  -- one somebody took away again.
+  panel.hidden_for_diff = nil
 
   -- Reopening comes back to what was being reviewed, commit mode included: `q`
   -- to get the screen back and the key again to return is one gesture, not a
@@ -1628,6 +1655,27 @@ function M.toggle()
   else
     M.open()
   end
+end
+
+---The diff was closed from inside it: go back to the list.
+---
+---The list the diff took off the screen (`close_on_diff`) comes back, and only
+---that one: a list the reviewer closed themselves was taken away to read with
+---the width of the editor, and the diff closing is not them asking for it again.
+---It comes back after the diff is gone and not before: the last window of the
+---diff stays in the tabpage, and the list opens beside it with its own width.
+---Opened first, the list was left alone when the diff closed its windows, and
+---took the whole screen.
+function M.back_from_diff()
+  local panel = current()
+  if not panel then return end
+
+  if panel.hidden_for_diff and not M.win() then
+    M.open()
+    return
+  end
+  local win = M.win()
+  if win then vim.api.nvim_set_current_win(win) end
 end
 
 ---Re-read git and re-render the panels on screen that `wants` accepts.
@@ -1855,6 +1903,35 @@ vim.api.nvim_create_autocmd("WinClosed", {
     end
 
     vim.schedule(function() for_each_panel_window(restore_width) end)
+  end,
+})
+
+---With `close_on_diff`, going into the diff of a line takes the list off the
+---screen: the reviewer came to read, and the diff gets the width of the editor.
+---However they went in — the key that opens the line, a window command from a
+---preview already drawn, a click — it is the focus arriving at a side that says
+---so, and not the key. The panel asks the diff which diff that is: the panel is
+---built on top of the diff, and that is the direction the two know each other
+---in (ADR-0009).
+---
+---A preview draws its diff without entering it, so sweeping the list leaves it
+---where it is. On the turn of the loop after, because a side is entered while
+---the diff is still being built, before it is known to be the diff of a line.
+vim.api.nvim_create_autocmd("WinEnter", {
+  group = GROUP,
+  desc = "Tirar o painel da tela quando o revisor entra no diff de uma linha",
+  callback = function()
+    if not config.options.close_on_diff then return end
+    local win = vim.api.nvim_get_current_win()
+
+    vim.schedule(function()
+      if vim.api.nvim_get_current_win() ~= win or not diff.is_line_diff(win) then return end
+      local panel = current()
+      if not panel or not M.win() then return end
+
+      panel.hidden_for_diff = true
+      M.close()
+    end)
   end,
 })
 

@@ -15,3 +15,19 @@ sobrar no uso vira o padrão.
 Um leitor futuro vai encontrar teclas quase redundantes e pode querer "limpar"
 isso. A redundância é temporária e proposital; apagar as perdedoras é uma linha
 cada, e só deve acontecer depois que o uso decidir.
+
+## Atualização: o painel sair da tela ao ler é uma opção
+
+`close_on_diff` é uma opção, e não uma tecla, e isso não contradiz o que está
+acima: ela não escolhe entre duas apresentações de diff que valha comparar lado
+a lado. O diff é o mesmo com ela ou sem ela; o que muda é quem tira a lista da
+tela. Tirar a lista já é uma tecla (`q` no painel, `<Leader>r`) e continua
+sendo com a opção ligada; o que a opção acrescenta é a entrada no diff fazer o
+mesmo. Como tecla, isso seria um gesto a mais antes de cada arquivo lido —
+justamente o que ela existe para poupar —, e uma tecla que só valeria "da
+próxima vez que entrar no diff" é uma opção com outro nome.
+
+É da mesma natureza do `seen_display` e do `neo_tree`: como a tela se arranja, e
+não qual apresentação ler. Desligada no plugin, porque o painel é o ponto de
+partida de toda ação e uma lista que sai sozinha é uma lista que o revisor tem
+que chamar de volta; ligada em `lua/polish.lua`, que é a escolha deste revisor.

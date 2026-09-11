@@ -52,6 +52,8 @@ local M = {}
 ---@field winbar table<integer, string> the winbar each window had before, by winid
 ---@field bars table<integer, string> the winbar the diff wrote in each window, by
 ---winid — what it writes back when something else writes over it
+---@field line_diff boolean|nil whether it is the diff a line of the list opens —
+---not the three versions of a conflict, nor a file read in another rev
 ---@field keys ReviewDiffKey[] the keys mapped in every buffer of the diff
 ---@field mappings table[] the buffer local mappings the keys of the diff wrote
 ---over, as `mapset` takes them back
@@ -174,12 +176,6 @@ local function file_buf(root, path)
   return bufnr
 end
 
----A label as the winbar shows it and not as it reads it: a `%` in a rev or a
----path is the start of an item there.
----@param text string
----@return string
-local function literal(text) return (text:gsub("%%", "%%%%")) end
-
 ---The winbar of one window of the diff: the side it is showing on the left,
 ---and, on the window that carries them, the keys it writes aligned to the
 ---right. The key goes beside what it does, which is how the context menu writes
@@ -195,14 +191,7 @@ local function literal(text) return (text:gsub("%%", "%%%%")) end
 ---@param keys ReviewDiffKey[]|nil
 ---@return string
 local function winbar(label, keys)
-  local bar = " " .. literal(label)
-
-  local written = {}
-  for _, key in ipairs(keys or {}) do
-    if key.written then written[#written + 1] = ("%s  %s"):format(key.label, key.key) end
-  end
-  if #written == 0 then return bar end
-  return bar .. "%=" .. literal(table.concat(written, "    ")) .. " "
+  return window.bar(label, vim.tbl_filter(function(key) return key.written end, keys or {}))
 end
 
 ---The diff a window is one of the sides of, whatever tabpage it was mounted in:
@@ -406,7 +395,6 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "FileType" }, {
     end)
   end,
 })
-
 ---How the key that brings the diff back is known to be ours when it is time to
 ---give it back: it is written on the reviewer's own file, where the editor and
 ---their configuration write too.
@@ -598,10 +586,11 @@ end
 ---The diff is looked up by the window the key was pressed in, and not by the
 ---tabpage: a side carried elsewhere (`<C-w>T`) still closes the diff it is part
 ---of.
----@param panel integer|nil winid to go back to; nil when the list is not on
----screen, and then closing the diff is all the key does
+---Where it goes back to is the panel's to say, asked for when the key is pressed
+---(ADR-0009): the list on screen, or the one `close_on_diff` took off the screen
+---when the reviewer went into this diff.
 ---@return ReviewDiffKey
-local function closing_key(panel)
+local function closing_key()
   return {
     key = config.options.mappings.close,
     label = "fechar",
@@ -617,7 +606,7 @@ local function closing_key(panel)
       if not tab then return end
 
       take_down(tab)
-      if panel and vim.api.nvim_win_is_valid(panel) then vim.api.nvim_set_current_win(panel) end
+      require("review.panel").back_from_diff()
     end,
   }
 end
@@ -920,7 +909,7 @@ end
 ---@return ReviewDiffKey[]
 local function reviewing_keys(target, sides)
   local keys = vim.list_extend(
-    vim.list_extend(vim.list_extend({ closing_key(target.panel) }, { opening_key(target) }), changing_keys()),
+    vim.list_extend(vim.list_extend({ closing_key() }, { opening_key(target) }), changing_keys()),
     stepping_keys()
   )
   vim.list_extend(keys, global_keys(sides[#sides].rev == nil))
@@ -954,6 +943,10 @@ end
 function M.open(target, opts)
   local left, right = two_way_sides(target.entry)
   build(target, { left, right }, focus_on(opts, 2), reviewing_keys(target, { left, right }), target.entry)
+  -- The presentation a file is read in. The three versions of a conflict and a
+  -- file read in another rev are made to be read with the list beside them, and
+  -- the panel asks which one it is (`M.is_line_diff`).
+  mounted_by_tab[vim.api.nvim_get_current_tabpage()].line_diff = true
 end
 
 ---The line of the list the diff of this tabpage is showing, which is how the
@@ -971,6 +964,16 @@ end
 function M.showing()
   local mount = mounted_by_tab[vim.api.nvim_get_current_tabpage()]
   return mount and mount.entry or nil
+end
+
+---Whether a window is a side of the diff a line of the list opens — the one the
+---panel leaves the screen for under `close_on_diff` — and not of the three
+---versions of a conflict or of a file read in another rev.
+---@param win integer winid
+---@return boolean
+function M.is_line_diff(win)
+  local _, mount = mount_of(win)
+  return mount ~= nil and mount.line_diff == true
 end
 
 ---The three versions git is holding for a conflicted path: a side each, short
@@ -1051,7 +1054,7 @@ function M.open_against(target, rev)
     -- what it is: the file was not there yet, or was already gone.
     { label = short(rev), rev = rev, path = path or entry.path, lines = lines or { "" } },
     current,
-  }, 2, { closing_key(target.panel) })
+  }, 2, { closing_key() })
 end
 
 ---Take the read-only view of a rev off the screen: the window goes back to the

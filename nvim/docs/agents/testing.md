@@ -46,7 +46,8 @@ acionada, e as afirmações feitas sobre cinco coisas apenas:
 2. o estado real do repositório depois das ações;
 3. o que o painel põe na tela ao lado dele: as janelas em modo diff que ele
    monta, o conteúdo de cada lado, a winbar de cada uma — o lado que ela mostra
-   e as teclas que o diff atende — e o arquivo que ele abre;
+   e as teclas que o diff atende —, o arquivo que ele abre, e a winbar da
+   própria janela do painel, com a tecla que lista todas as outras;
 4. os processos `git` que ele dispara para montar a lista, contados por um `git`
    de mentira que fica na frente do PATH (`fixture.trace_git`);
 5. o que ele põe na área de transferência, lido do provedor de clipboard do
@@ -236,6 +237,16 @@ mapeamentos do buffer descreve (décimo terceiro item) — as duas saem da mesma
 lista, e o teste é o que prova que não divergiram. No diff, que ela lista as
 teclas que a winbar deixou de escrever e as globais que valem nele. As teclas
 que a winbar escreve são lidas pelo terceiro item, como sempre foram.
+
+O painel sair da tela ao ler (`close_on_diff`) também não trouxe item novo: é
+lido pelo primeiro e pelo terceiro juntos — se a janela do painel está na tela,
+quantas janelas de diff há, onde está o foco, em que linha o cursor do painel
+volta e com que largura. A janela do diff é entrada pelo gesto do revisor — a
+tecla, ou `nvim_set_current_win` no lugar do `<C-w>l` —, e o `WinEnter` chega
+sozinho num editor headless. O que o painel faz com ele é agendado, e o teste
+espera pelo painel sair ou voltar (`vim.wait` com a condição), e não por um
+tempo. Onde o que se afirma é que ele *não* sai, não há condição a esperar, e a
+espera é a de um giro do laço.
 
 O segundo grafo, o do gitgraph, fica sem teste como a delegação ao diffview e ao
 neogit ficam, e pelo mesmo motivo (ADR-0005): é uma chamada de uma linha, e
@@ -540,6 +551,9 @@ manda a soltura do botão pela lista de teclas, que é como o painel a lê de um
 script — e é justamente o caso em que a guarda não tem posição para conferir. A
 guarda é verificada à mão, com um editor rodando dentro de um terminal: clique
 na área vazia abaixo da lista não abre nada, clique na linha abre o diff dela.
+Com a winbar do painel ocupando a primeira linha da janela, o que se olha também
+é a última linha da lista: o clique nela abre o diff dela, e não é tomado pela
+linha vazia abaixo.
 Vale o mesmo para o menu do botão direito desenhado na tela; o que o teste lê é
 o menu do editor, de onde esse desenho sai.
 

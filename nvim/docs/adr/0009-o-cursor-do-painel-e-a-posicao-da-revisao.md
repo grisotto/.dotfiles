@@ -95,3 +95,23 @@ lido. Uma tecla que faz as duas coisas sem avisar faz a segunda por engano.
 Só duas teclas seguidas na mesma ponta atravessam — qualquer tecla que mova o
 cursor desarma —, então quem voltou ao meio do arquivo e chegou de novo ao fim é
 avisado outra vez, em vez de sair dele na primeira tecla.
+
+## Atualização: a lista sai da tela ao ler, e volta pelo `q`
+
+Com `close_on_diff` (ADR-0006), entrar no diff de uma linha tira a lista da tela.
+A posição da revisão não muda de dono: com a lista fora, quem responde é o diff
+montado, como a primeira atualização estabelece, e o cursor alcança a revisão
+quando a lista volta.
+
+A direção entre os dois continua a mesma. É o painel que escuta o foco chegar a
+um lado do diff (`WinEnter`) e pergunta ao diff se aquele é o diff de uma linha
+(`diff.is_line_diff`): o painel é construído em cima do diff e pode perguntar a
+ele. O diff só chama o painel na hora em que a tecla que o fecha é apertada
+(`back_from_diff`), como as teclas do laço já faziam.
+
+O `q` do diff traz de volta a lista que a entrada no diff tirou, e só ela. A
+lista que o revisor fechou por conta própria continua fechada: ele a tirou para
+ler com a largura do editor, e fechar o diff não é pedir a lista de novo. E ela
+volta depois de o diff sair, e não antes: a última janela do diff fica de pé na
+aba, e o painel abre ao lado dela com a largura dele. Aberto antes, o painel
+ficava sozinho quando o diff fechava as janelas dele, e tomava a tela inteira.

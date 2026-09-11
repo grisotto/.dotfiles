@@ -22,9 +22,12 @@ local M = {}
 ---whether the button came up over a line at all. Below the list the editor
 ---answers the last line of the buffer — and sends the cursor there too — so
 ---without this a click on the empty rows would act on whatever the list
----happens to end with. What tells the two apart is the row inside the window,
----which is not clamped to the text. A release outside the window is a drag
----that ended elsewhere, and means nothing here either.
+---happens to end with. What tells the two apart is the row on the screen, which
+---is not clamped to the text, against where the text of the window starts —
+---below its winbar, when it has one: counted as a line, the bar would push
+---every click one line down, and the last line of the list would read as the
+---empty row below it. A release outside the window is a drag that ended
+---elsewhere, and means nothing here either.
 ---
 ---A release carrying no position at all is not a click: `<LeftRelease>` also
 ---arrives fed by a script or a macro, and there the list reads its own cursor,
@@ -38,8 +41,30 @@ function M.is_click_on_a_line(win)
   local mouse = vim.fn.getmousepos()
   if mouse.winid == 0 then return true end
   if mouse.winid ~= win then return false end
-  local line = vim.fn.line("w0", win) + mouse.winrow - 1
+  local info = vim.fn.getwininfo(win)[1]
+  local line = info.topline + mouse.screenrow - (info.winrow + info.winbar)
   return line <= vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
+end
+
+---Text as a winbar shows it and not as it reads it: a `%` in a rev or a path is
+---the start of an item there.
+---@param text string
+---@return string
+local function literal(text) return (text:gsub("%%", "%%%%")) end
+
+---A winbar of the review: a name on the left, and keys aligned to the right,
+---each beside what it does — which is how the context menu writes the same pair
+---(ADR-0008). The diff and the panel write theirs here, so a key reads the same
+---wherever the reviewer finds it.
+---@param name string what the window is showing; empty for nothing
+---@param keys { label: string, key: string }[] in the order they are written
+---@return string
+function M.bar(name, keys)
+  local bar = name ~= "" and (" " .. literal(name)) or ""
+  if #keys == 0 then return bar end
+
+  local written = vim.tbl_map(function(key) return ("%s  %s"):format(key.label, key.key) end, keys)
+  return bar .. "%=" .. literal(table.concat(written, "    ")) .. " "
 end
 
 ---@param panel integer|nil winid; nil is a list that is not on screen, and then

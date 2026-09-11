@@ -21,5 +21,9 @@ require("review").setup {
   -- lista abre já mostrando o diff da linha, e `p` desliga quando começa a
   -- leitura de verdade.
   preview = true,
+  -- Entrar no diff de uma linha — o `<CR>` num arquivo, ou pular para o diff que
+  -- o preview desenhou — tira o painel da tela e dá ao diff a largura inteira;
+  -- o `q` do diff o traz de volta.
+  close_on_diff = true,
   neo_tree = "close", -- fecha o neo-tree ao abrir, para não disputarem o espaço
 }

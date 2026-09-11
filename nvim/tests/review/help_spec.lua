@@ -94,6 +94,18 @@ describe("ajuda das teclas", function()
 
       assert.is_false(help.is_open())
     end)
+
+    it("a winbar do painel escreve a tecla que mostra todas as outras, e segue a configurada", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      assert.matches("ver todas as teclas%s+g%?", vim.wo[panel.win()].winbar)
+
+      review.setup { mappings = { help = "<F1>" } }
+      review.refresh()
+
+      assert.matches("ver todas as teclas%s+<F1>", vim.wo[panel.win()].winbar)
+    end)
   end)
 
   describe("no diff", function()

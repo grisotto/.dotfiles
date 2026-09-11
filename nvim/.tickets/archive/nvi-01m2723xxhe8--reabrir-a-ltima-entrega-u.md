@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723xxhe8
 title: Reabrir a última entrega (U)
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:05.896993097Z'
-updated: '2026-09-11T23:12:37.188293290Z'
+updated: '2026-09-11T23:13:37.268809528Z'
+closed: '2026-09-11T23:13:37.268809528Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -23,6 +24,8 @@ acceptance:
   done: true
 deps:
 - nvi-01m2723xn2ga
+external_refs:
+- git:8eaefe9
 ---
 
 ## Parent
@@ -56,3 +59,7 @@ Decisão da nota anterior: apagar os .xml/.md do modo quando ele fica sem anota�
 A reabertura sozinha não esvazia nada — as anotações voltam a abertas e o R seguinte regrava os arquivos. O caminho só é alcançado quando o revisor apaga as anotações devolvidas, e aí o que os arquivos ainda guardavam era exatamente a entrega que deixou de existir: mantê-los seria entregar ao agente o que a revisão não diz mais.
 
 O teste voltou a report_spec por esse caminho ('leva embora os relatórios do modo quando a reabertura e o apagar esvaziam a revisão'), ao lado do que chega lá pelo documento gravado antes das entregas. A razão ficou no comentário de M.generate, em lua/review/report.lua, que antes justificava a limpeza sem falar em reabertura.
+
+**2026-09-11T23:13:37.268809528Z**
+
+U no painel reabre a última entrega do modo: ela sai do histórico e as anotações dela voltam a abertas, para corrigir o relatório gerado e não mandado. Sem entrega no modo, avisa; colisão com anotação aberta no mesmo ponto recusa inteira, antes de qualquer escrita, nomeando o ponto com a versão em que a linha foi lida. A tecla sai da lista única de ações, então entra no menu, no which-key e na ajuda de uma vez (ADR-0008). README (tecla e roteiro) e docs/agents/testing.md atualizados. make format, make lint (0 erros, 0 avisos) e make test (433 specs, 0 falhas) verdes.

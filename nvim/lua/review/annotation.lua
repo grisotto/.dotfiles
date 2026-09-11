@@ -21,6 +21,11 @@
 ---asks the agent for with it —, in the editor's own selection UI: deciding
 ---whether a remark is a fix, a question or a "leave this as it is" is part of
 ---writing it, and the report tells the agent what each type asks for.
+---
+---Or, by option (`annotation_type_entry = "prefix"`), in the text itself: no
+---selector comes before the entry, the reviewer writes `question: …`, and the
+---name of a type in front of the text is the type. Editing brings the prefix
+---back in front of the text, so changing the type is editing it too.
 local config = require "review.config"
 local git = require "review.git"
 local root = require "review.root"
@@ -207,6 +212,34 @@ local function choose_type(point, current, done)
   )
 end
 
+---The type written in front of a text and the text without it, when the
+---reviewer gives the type by prefix (`question: por que isto?`). Only the exact
+---name of a type is one: a prefix that is not — `nota: …`, or an abbreviation —
+---is part of a sentence of the reviewer's, and the text stays as it was. The
+---characters of a name are the ones `annotation_types` accepts in the config.
+---@param text string
+---@return string|nil kind nil when the text does not start with a type
+---@return string text
+local function split_prefix(text)
+  local name, rest = text:match "^([%w_-]+):%s*(.*)$"
+  if name and vim.iter(M.types()):any(function(kind) return kind.name == name end) then return name, rest end
+  return nil, text
+end
+
+---What the entry comes prefilled with when the type is given by prefix: the
+---text with the type written in front, so that changing the type is editing the
+---text. The default type goes without one — it is what a text without a prefix
+---already is —, unless the text itself starts with the name of a type, its own
+---included: written back untouched, that name would be read as the prefix and
+---leave the text.
+---@param kind string
+---@param text string
+---@return string
+local function with_prefix(kind, text)
+  if kind == DEFAULT_TYPE and not split_prefix(text) then return text end
+  return ("%s: %s"):format(kind, text)
+end
+
 ---The filetype of the long entry's buffer, which is also how it is found on
 ---screen.
 local ENTRY_FILETYPE = "review-annotation"
@@ -223,7 +256,7 @@ local ENTRY_WIDTH, ENTRY_HEIGHT = 72, 10
 ---Ask for the text in a window of its own, prefilled with what is already
 ---written. The reviewer edits it as they edit anything else, and the two keys
 ---on the border say how it ends.
----@param about string the type and the point, e.g. "issue em a.clj:42-44"
+---@param about string what is being written, e.g. "issue em a.clj:42-44", or only the point when the type is given by prefix
 ---@param text string what is already written, empty for a new annotation
 ---@param done fun(written: string|nil) nil when the reviewer gave it up
 local function long_entry(about, text, done)
@@ -289,15 +322,16 @@ end
 ---Ask for the text on one line, prefilled with what is already written. The
 ---editor's own input UI, so it is asked wherever the reviewer already reads
 ---the editor's questions.
----@param about string the type and the point, e.g. "issue em a.clj:42-44"
+---@param about string what is being written, e.g. "issue em a.clj:42-44", or only the point when the type is given by prefix
 ---@param text string
 ---@param done fun(written: string|nil) nil when the reviewer gave it up
 local function one_line_entry(about, text, done) vim.ui.input({ prompt = about .. ": ", default = text }, done) end
 
 ---Write the annotation of a point, asking the reviewer for the type and then
----the text, and editing what is already there.
+---the text, and editing what is already there. With the type given by prefix
+---there is only the text to ask for, and the type is read from it.
 ---
----Giving up either question gives the annotation up: what is already written
+---Giving up any question gives the annotation up: what is already written
 ---stays as it was.
 ---
 ---An annotation that does not fit on one line is edited in the long entry
@@ -312,10 +346,20 @@ local function one_line_entry(about, text, done) vim.ui.input({ prompt = about .
 function M.write(point, opts, done)
   local existing = state.annotation_at(point)
   local text = existing and existing.text or ""
+  local ask = (opts and opts.long or text:find "\n") and long_entry or one_line_entry
+
+  if config.options.annotation_type_entry == "prefix" then
+    ask(where(point), with_prefix(M.type_of(existing), text), function(written)
+      if not written then return end
+      local kind, rest = split_prefix(vim.trim(written))
+      state.annotate(point, rest, kind or DEFAULT_TYPE)
+      done()
+    end)
+    return
+  end
 
   choose_type(point, M.type_of(existing), function(kind)
     if not kind then return end
-    local ask = (opts and opts.long or text:find "\n") and long_entry or one_line_entry
     ask(("%s em %s"):format(kind, where(point)), text, function(written)
       if not written then return end
       state.annotate(point, vim.trim(written), kind)

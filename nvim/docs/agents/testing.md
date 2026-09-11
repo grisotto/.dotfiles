@@ -373,6 +373,14 @@ seletor desiste da anotação: um spec que esqueceu de responder não grava nada
 em vez de gravar um tipo que ninguém escolheu. A anotação legada, sem tipo, é
 plantada no documento (`document.plant`), como a de outro modo.
 
+O tipo pelo prefixo (`nvi-01m2723wke2n`) não trouxe item novo: com
+`annotation_type_entry = "prefix"` no `setup`, o que se afirma é que o seletor
+não perguntou nada (`confirm.prompts` vazio), que a entrada diz só o ponto
+(`input.prompts`, `entry.title`), com que texto a edição chegou preenchida
+(`input.defaults`, `entry.lines`) e o tipo e o texto que ficaram gravados no
+documento de estado depois do que o revisor escreveu (`input.answer`,
+`entry.type`).
+
 `tests/helpers/menu.lua` lê o menu de contexto do editor: `menu.entries()` devolve
 as entradas na ordem em que aparecem, `menu.actions()` só as que têm ação e
 atalho, na forma tecla → ação, e `menu.choose` escolhe uma pelo texto, que é o

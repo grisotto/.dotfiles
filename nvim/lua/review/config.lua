@@ -65,6 +65,7 @@ local M = {}
 ---@field neo_tree "close"|"ignore" what to do with a neo-tree window in the way
 ---@field report_directory string|nil where the review report is written
 ---@field annotation_types ReviewAnnotationType[] types added to the built-in ones, or replacing the instruction of one
+---@field annotation_type_entry "select"|"prefix" where the type of an annotation is given: a selector before the text, or a prefix written in it
 ---@field mappings ReviewMappings
 ---@field merge_layouts ReviewMergeLayouts
 local defaults = {
@@ -78,6 +79,13 @@ local defaults = {
   -- options are merged by `vim.tbl_deep_extend`, which takes a list whole, and
   -- a list written here would replace all eight instead of adding to them.
   annotation_types = {},
+  -- How the type of an annotation is given. "select" asks for it in a selector
+  -- before the text; "prefix" asks for nothing, and the reviewer writes it in
+  -- front of the text (`question: por que isto?`). An option and not a key,
+  -- unlike the entries of one line and of several: they are two ways of writing
+  -- the same thing that cannot share an entry — with both, the type would be
+  -- asked twice (update of ADR-0006).
+  annotation_type_entry = "select",
   -- Where the report is written, as an absolute path. Absent, it goes beside
   -- the review state under the editor's data directory — outside the
   -- repository being reviewed, which is the part that is not a preference
@@ -291,7 +299,9 @@ local function validate(options)
     end
   end
   -- A type is a word the report writes as it is — in an attribute of the XML,
-  -- in a heading of the markdown, at the start of a line of the quickfix — and
+  -- in a heading of the markdown, at the start of a line of the quickfix, and
+  -- in front of the text when it is given by prefix, whose pattern in the
+  -- annotation takes the same characters as the one here — and
   -- one without an instruction is a type the preamble cannot explain. A table
   -- keyed by name instead of a list would be silently empty.
   if not vim.islist(options.annotation_types) then
@@ -304,6 +314,15 @@ local function validate(options)
     if type(kind.instruction) ~= "string" or vim.trim(kind.instruction) == "" then
       error(("review: annotation_types[%d].instruction must be a non-empty string"):format(position))
     end
+  end
+  -- A typo would be silent otherwise: anything that is not "prefix" would read
+  -- as the selector, and a prefix written in the text would stay in it.
+  if options.annotation_type_entry ~= "select" and options.annotation_type_entry ~= "prefix" then
+    error(
+      ('review: annotation_type_entry must be "select" or "prefix", got %q'):format(
+        tostring(options.annotation_type_entry)
+      )
+    )
   end
   for name, key in pairs(options.mappings) do
     if type(key) ~= "string" or key == "" then

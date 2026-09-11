@@ -525,6 +525,18 @@ annotation_types = {
 
 Uma anotação gravada antes de haver tipo conta como `issue`.
 
+Com `annotation_type_entry = "prefix"`, em `lua/polish.lua`, o seletor não
+aparece: o tipo é escrito na frente do texto, e a entrada diz só o ponto
+(`a.clj:42-44`). `question: por que isto?` grava uma `question` com o texto
+`por que isto?`. Só o nome exato de um tipo configurado conta, sem abreviações:
+sem prefixo, ou com um que não é tipo (`nota: …`), a anotação é `issue` e o
+texto fica como foi escrito. Ao editar, a entrada vem com `nome: ` na frente do
+texto em todo tipo que não é `issue`, e trocar o prefixo troca o tipo. O
+`issue` vem sem prefixo, a não ser que o texto dele comece com o nome de um tipo,
+o próprio `issue` incluído: aí vem `issue: ` na frente, para gravar sem mexer
+não trocar o tipo nem tirar aquele nome do texto. O
+padrão é `"select"`, o seletor.
+
 Cada anotação de linha guarda o número da linha e também o texto dela, a âncora
 (ADR-0003). Na geração do relatório, se o texto não bate mais, a âncora é
 procurada no arquivo e a anotação é reancorada na linha em que está agora; se não
@@ -711,6 +723,11 @@ ou `<Leader>r`, que continuam valendo, ou também a entrada no diff. Como tecla,
 seria um gesto a mais antes de cada arquivo lido, que é o que ela poupa
 (atualização do ADR-0006).
 
+E a terceira é como o tipo da anotação é dado (`annotation_type_entry`): no
+seletor ou no prefixo do texto. Não são duas apresentações do mesmo resultado, e
+sim dois jeitos de escrever que não cabem na mesma entrada — com os dois, o tipo
+seria pedido duas vezes.
+
 O porquê de cada decisão acima está em [`docs/adr/`](docs/adr/) — a ida ao
 arquivo e a volta por ela são o ADR-0010, e as duas escalas do laço estão na
 atualização do ADR-0009.
@@ -782,6 +799,11 @@ atualização do ADR-0009.
    arquivo unstaged, `g?` no diff lista `<Leader>ga`; num staged, não. Com um
    `annotation_types` em `lua/polish.lua`, o tipo novo aparece no fim do
    seletor, e o que troca a instrução de um existente aparece com a nova.
+   Com `annotation_type_entry = "prefix"`, `<Leader>ga` abre a entrada direto,
+   sem seletor, dizendo só `a.txt:N`; escreva `question: por que isto?` e gere
+   o relatório: o item é `question` e o texto não tem o prefixo. `nota: algo`
+   sai `issue` com o texto inteiro. Anotar o mesmo ponto de novo traz
+   `question: por que isto?` na entrada; trocar para `test:` troca o tipo.
 10. **Relatório** — `R`. A notificação diz que ele foi copiado e onde foi
    gravado (`….xml`); a quickfix abre com os pontos, cada um começando com
    `#<id> <tipo>`, e o cursor fica no painel. O preâmbulo explica só os tipos

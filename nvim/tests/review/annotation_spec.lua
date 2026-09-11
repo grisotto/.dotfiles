@@ -657,6 +657,136 @@ describe("anotação", function()
     end)
   end)
 
+  describe("tipo da anotação pelo prefixo", function()
+    before_each(function() review.setup { annotation_type_entry = "prefix" } end)
+
+    it("não mostra seletor, e o prefixo define o tipo e sai do texto", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "question: por que isto?"
+      review.annotate()
+
+      assert.same({}, confirm.prompts())
+      assert.same({ "a.txt:2: " }, input.prompts())
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("question", annotations[1].type)
+      assert.equals("por que isto?", annotations[1].text)
+    end)
+
+    it("grava issue com o texto intacto sem prefixo, com prefixo desconhecido ou abreviado", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 1)
+      input.answer "sem prefixo nenhum"
+      review.annotate()
+      vim.api.nvim_win_set_cursor(0, { 2, 0 })
+      input.answer "nota: isto é uma frase minha"
+      review.annotate()
+      vim.api.nvim_win_set_cursor(0, { 3, 0 })
+      input.answer "quest: não é abreviação de tipo"
+      review.annotate()
+
+      local annotations = document.annotations()
+      assert.same({ "issue", "issue", "issue" }, vim.tbl_map(function(written) return written.type end, annotations))
+      assert.same(
+        { "sem prefixo nenhum", "nota: isto é uma frase minha", "quest: não é abreviação de tipo" },
+        vim.tbl_map(function(written) return written.text end, annotations)
+      )
+    end)
+
+    it("edita com o prefixo do tipo na frente, e trocar o prefixo troca o tipo", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "question: por que isto?"
+      review.annotate()
+      input.answer "test: falta o teste disto"
+      review.annotate()
+      input.answer "agora é só um problema"
+      review.annotate()
+      input.answer "e continua sendo"
+      review.annotate()
+
+      -- O `issue` não vem com prefixo: é o que o texto sem prefixo já é.
+      assert.same(
+        { "", "question: por que isto?", "test: falta o teste disto", "agora é só um problema" },
+        input.defaults()
+      )
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("issue", annotations[1].type)
+      assert.equals("e continua sendo", annotations[1].text)
+    end)
+
+    it("vale na entrada longa, que vem preenchida com o prefixo", function()
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "praise: ficou bom"
+      review.annotate()
+      review.annotate { long = true }
+
+      assert.same({}, confirm.prompts())
+      assert.equals("a.txt:2", entry.title())
+      assert.same({ "praise: ficou bom" }, entry.lines())
+      entry.feed "ggdG"
+      entry.type "refactor: extraia\numa função"
+      entry.save()
+
+      local annotations = document.annotations()
+      assert.equals("refactor", annotations[1].type)
+      assert.equals("extraia\numa função", annotations[1].text)
+    end)
+
+    it("põe issue na frente do issue cujo texto começa com o nome de um tipo", function()
+      -- Escrito no seletor, `question: …` é o texto de um issue. Editado sem o
+      -- prefixo dele, voltaria gravado como question.
+      review.setup {}
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      read_file("Unstaged", "a%.txt", 2)
+      input.answer "question: é o texto, não o tipo"
+      review.annotate()
+      review.setup { annotation_type_entry = "prefix" }
+      input.answer "issue: question: é o texto, não o tipo"
+      review.annotate()
+
+      -- O mesmo vale para o texto que começa com o nome do próprio issue: sem
+      -- outro prefixo na frente, gravar sem mexer levaria o `issue: ` embora.
+      review.setup {}
+      vim.api.nvim_win_set_cursor(0, { 3, 0 })
+      input.answer "issue: também é o texto"
+      review.annotate()
+      review.setup { annotation_type_entry = "prefix" }
+      input.answer "issue: issue: também é o texto"
+      review.annotate()
+
+      assert.same({
+        "",
+        "issue: question: é o texto, não o tipo",
+        "",
+        "issue: issue: também é o texto",
+      }, input.defaults())
+      local annotations = document.annotations()
+      assert.same({ "issue", "issue" }, vim.tbl_map(function(written) return written.type end, annotations))
+      assert.same(
+        { "question: é o texto, não o tipo", "issue: também é o texto" },
+        vim.tbl_map(function(written) return written.text end, annotations)
+      )
+    end)
+
+    it("recusa na configuração uma entrada do tipo que não é select nem prefix", function()
+      assert.has_error(function() review.setup { annotation_type_entry = "prefixo" } end)
+    end)
+  end)
+
   describe("entre sessões", function()
     it("mantém as anotações depois de fechar e reabrir o painel", function()
       -- Nada fica na memória do painel: reabrir só volta a contar a anotação

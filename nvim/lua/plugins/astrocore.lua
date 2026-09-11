@@ -108,23 +108,41 @@ return {
       },
     },
     -- Mappings can be configured through AstroCore as well.
-    -- NOTE: keycodes follow the casing in the vimdocs. For example, `<Leader>` must be capitalized
+    --
+    -- O lado esquerdo segue a grafia do `:h keycodes` — `<Leader>`,
+    -- `<LocalLeader>`, `<Tab>`, `<C-Up>`. Não é estilo. O AstroCore guarda os
+    -- mapeamentos numa tabela indexada pela string, então `<leader>p` e
+    -- `<Leader>p` entram como duas chaves diferentes. O `normalize_mappings` do
+    -- AstroCore junta as duas no `setup()`, e junta percorrendo a tabela
+    -- enquanto a altera: quando as duas grafias existem, qual sobrevive muda de
+    -- uma partida para outra. Foi assim que `<Leader>p` ficou mudo — um `false`
+    -- numa grafia e o mapeamento na outra. Escrever a mesma tecla em duas
+    -- grafias é cara-ou-coroa, não estilo; o `:checkhealth astrocore` acusa.
     mappings = {
       -- first key is the mode
       n = {
-        -- Normal mode clipboard mappings
-        ["<Leader>p"] = false,
-        ["<leader>Y"] = { '"zyg_', desc = "Copy line to clipboard" },
-        ["<leader>y"] = { '"zy', desc = "Copy to clipboard" },
-        ["<leader>yy"] = { '"zyy', desc = "Copy entire line to clipboard" },
-        ["<leader>p"] = { '"zp', desc = "Paste from clipboard" },
-        ["<leader>P"] = { '"zP', desc = "Paste before from clipboard" },
+        -- Área de transferência pelo registro `z`, para o `y`/`p` de todo dia
+        -- seguirem no registro sem nome.
+        --
+        -- `<Leader>p` também é o prefixo do menu "Plugins" do AstroNvim (`pi`,
+        -- `ps`, `pS`, `pu`, `pU`, `pa`, `pm`, `pM`), e esses continuam
+        -- existindo: colar aqui só acontece depois do `timeoutlen` (500 ms),
+        -- porque o Neovim precisa desistir de uma sequência mais longa. É de
+        -- propósito, e não um bug a consertar — a tecla vale mais como colar do
+        -- que como porta de um menu que se alcança pelo `:Lazy`.
+        ["<Leader>y"] = { '"zy', desc = "Copy to clipboard" },
+        ["<Leader>Y"] = { '"zyg_', desc = "Copy line to clipboard" },
+        ["<Leader>yy"] = { '"zyy', desc = "Copy entire line to clipboard" },
+        ["<Leader>p"] = { '"zp', desc = "Paste from clipboard" },
+        ["<Leader>P"] = { '"zP', desc = "Paste before from clipboard" },
         -- second key is the lefthand side of the map
-        -- whick-key sub-menu for Visual-Multi Cursors (Multiple Cursors)
-        ["gm"] = { name = "Multiple Cursors" },
+        -- Rótulo do menu do which-key para o Visual-Multi. O AstroCore nomeia
+        -- menu com `desc`; uma tabela com `name` não chega a ser registrada e o
+        -- grupo aparece sem nome.
+        ["gm"] = { desc = "Multiple Cursors" },
 
         -- Toggle last open buffer
-        ["<Leader><tab>"] = { "<cmd>b#<cr>", desc = "Previous tab" },
+        ["<Leader><Tab>"] = { "<cmd>b#<cr>", desc = "Previous tab" },
         -- navigate buffer tabs
         ["]b"] = { function() require("astrocore.buffer").nav(vim.v.count1) end, desc = "Next buffer" },
         ["[b"] = { function() require("astrocore.buffer").nav(-vim.v.count1) end, desc = "Previous buffer" },
@@ -146,14 +164,14 @@ return {
         -- setting a mapping to false will disable it
         -- ["<C-S>"] = false,
         -- Toggle between src and test (Clojure pack | other-nvim)
-        ["<localLeader>ts"] = { "<cmd>Other<cr>", desc = "Switch src & test" },
-        ["<localLeader>tS"] = { "<cmd>OtherVSplit<cr>", desc = "Switch src & test (Split)" },
+        ["<LocalLeader>ts"] = { "<cmd>Other<cr>", desc = "Switch src & test" },
+        ["<LocalLeader>tS"] = { "<cmd>OtherVSplit<cr>", desc = "Switch src & test (Split)" },
       },
       v = {
         -- Visual mode clipboard mappings
-        ["<leader>y"] = { '"zy', desc = "Copy to clipboard in visual mode" },
-        ["<leader>p"] = { '"zp', desc = "Paste from clipboard in visual mode" },
-        ["<leader>P"] = { '"zP', desc = "Paste before in visual mode from clipboard" },
+        ["<Leader>y"] = { '"zy', desc = "Copy to clipboard in visual mode" },
+        ["<Leader>p"] = { '"zp', desc = "Paste from clipboard in visual mode" },
+        ["<Leader>P"] = { '"zP', desc = "Paste before in visual mode from clipboard" },
       },
     },
   },

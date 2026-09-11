@@ -205,6 +205,26 @@ function M.data_dir()
   return dir
 end
 
+---What `XDG_CONFIG_HOME` was before `M.config_dir` moved it, put back by
+---`M.cleanup` for the same reason as the data directory's.
+---@type string|nil
+local previous_config_home = nil
+local config_home_moved = false
+
+---A configuration directory of the editor's own, empty: the template of the
+---report's preamble is read from under it by default, so a test that asks for
+---one writes the template there instead of into the reviewer's configuration.
+---@return string dir
+function M.config_dir()
+  if not config_home_moved then
+    previous_config_home = vim.env.XDG_CONFIG_HOME
+    config_home_moved = true
+  end
+  local dir = tempdir "config"
+  vim.env.XDG_CONFIG_HOME = dir
+  return dir
+end
+
 ---Remove every directory this module created.
 function M.cleanup()
   if previous_path then
@@ -214,6 +234,10 @@ function M.cleanup()
   if data_home_moved then
     vim.env.XDG_DATA_HOME = previous_data_home
     previous_data_home, data_home_moved = nil, false
+  end
+  if config_home_moved then
+    vim.env.XDG_CONFIG_HOME = previous_config_home
+    previous_config_home, config_home_moved = nil, false
   end
   for _, dir in ipairs(created) do
     vim.fn.delete(dir, "rf")

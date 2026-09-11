@@ -618,7 +618,8 @@ O documento tem três partes, e nenhuma data:
   citado, que não faça commit e que responda uma linha por id com `feito`,
   `respondido` ou `recusado: motivo`. Só os tipos que aparecem nos itens são
   explicados, com a instrução da configuração e na ordem dela. A regra do trecho
-  não encontrado só aparece quando algum item é assim;
+  não encontrado só aparece quando algum item é assim. O texto vem de um modelo
+  que você pode editar (veja [O preâmbulo](#o-preâmbulo));
 - os itens, numa lista só, ordenada por arquivo e por linha, com a anotação de
   arquivo antes das de linha. Cada um tem `id`, o tipo escolhido no seletor
   (veja [Anotações e reancoragem](#anotações-e-reancoragem)), arquivo, linhas, o
@@ -654,6 +655,30 @@ com `#<id> <tipo>` — que é o que liga o ponto à linha de resposta do agente 
 percorrida com as teclas do editor: `:cnext`, `:cprev`, `:copen`. O item cujo
 trecho não foi encontrado vai sem linha e diz `não está no disco`. A lista
 anterior continua a um `:colder` de distância.
+
+### O preâmbulo
+
+O texto do preâmbulo vem de um arquivo de modelo, que você edita para ajustar o
+tom e as regras sem mexer no plugin: `review/preamble.md` no diretório de
+configuração do editor (`~/.config/nvim/review/preamble.md`, que nesta
+configuração é este repositório: o modelo fica dentro dele, e entra no git se
+você o commitar), ou o
+caminho absoluto em `preamble_template`, em `lua/polish.lua`. Sem o arquivo,
+vale o preâmbulo embutido, o `PREAMBLE` de `lua/review/report.lua`, que é o
+ponto de partida para copiar. O arquivo é lido a cada geração — a edição vale no
+próximo `R` ou `M`, sem reiniciar o editor —, e os dois formatos levam o mesmo
+preâmbulo.
+
+| Marcador | O que o relatório põe no lugar |
+| --- | --- |
+| `{types}` | A instrução de cada tipo usado nos itens, uma por linha, na ordem da configuração |
+| `{reference}` | De qual versão são as linhas citadas |
+| `{not_found}` | A regra do trecho não encontrado; vazio quando nenhum item é assim |
+
+Um marcador que o relatório não conhece (`{agente}`) fica no texto como está, e
+um que o modelo não traz simplesmente não aparece: um modelo seu nunca quebra a
+geração. Linhas em branco seguidas viram uma só, para que um marcador vazio não
+deixe um buraco no texto.
 
 ### O que é do neogit e do diffview
 
@@ -692,6 +717,10 @@ próprio painel está mostrando:
 
 A raiz vai no nome com as barras escapadas (`%2F`). O destino do relatório é
 configurável em `lua/polish.lua` (`report_directory`, caminho absoluto).
+
+O modelo do preâmbulo não é gravado, é lido: `review/preamble.md` no diretório de
+configuração do editor, ou o caminho absoluto em `preamble_template` (veja
+[O preâmbulo](#o-preâmbulo)).
 
 Revisão é artefato pessoal e temporário, e escrever no working tree sujaria
 justamente a lista que o painel está mostrando: os arquivos da revisão apareceriam
@@ -818,7 +847,11 @@ atualização do ADR-0009.
    arquivo. Menu de contexto, which-key e `g?` no painel mostram `R` e `M`. Num
    commit, o cabeçalho traz o sha inteiro e o assunto; num intervalo,
    `<mais antigo>^..<mais novo>`. `git status` no repositório revisado continua
-   igual ao de antes.
+   igual ao de antes. Crie `~/.config/nvim/review/preamble.md` com
+   `Olá, {agente}.`, uma linha em branco e `{types}`, e aperte `R` e `M` de novo:
+   o preâmbulo dos dois é esse texto, com `{agente}` como está e a instrução do
+   tipo no lugar de `{types}`, e sem referência nem regra do trecho não
+   encontrado. Apague o arquivo e gere: o preâmbulo embutido volta.
 11. **Reancoragem** — anote a linha 2 de um arquivo, insira duas linhas acima
    dela, salve e gere o relatório de novo: a anotação sai na linha 4. Agora
    apague a linha anotada, salve e gere: ela continua na lista, no lugar dela,

@@ -33,6 +33,11 @@ caminho — um glifo escrito à mão muda quando o mini.icons muda.
 o teste rodaria contra a configuração real, com o que o gerenciador de plugins
 tivesse carregado nela.
 
+O `minimal_init` também tira o diretório de configuração do editor de cima deste
+repositório, que é o de verdade: é de lá que o modelo do preâmbulo do relatório
+é lido por padrão (`review/preamble.md`), e um modelo que o revisor guardasse ali
+mudaria o que todo relatório da suíte diz.
+
 ## A costura
 
 Uma só, definida na spec do épico (`nvi-01m1d6164sz2`): Neovim headless, um
@@ -274,11 +279,13 @@ arquivo, e o índice não tem estágio 1 dele (`repo:conflict_without_base`) —
 repositório sem commits
 (`fixture.repo_without_commits`) e diretório que não é repositório
 (`fixture.plain_dir`). Também monta um diretório de dados do editor só para o
-teste (`fixture.data_dir`), que é onde o estado da revisão é gravado, e o `git`
-de mentira que registra as chamadas (`fixture.trace_git`). Chame
-`fixture.cleanup()` num `after_each`: é ele que devolve `XDG_DATA_HOME` e `PATH`
-ao que eram. O repositório do fixture também é lido de volta, que é como se
-afirma sobre o disco depois de uma ação: `repo:read` e `repo:exists`.
+teste (`fixture.data_dir`), que é onde o estado da revisão é gravado, um de
+configuração (`fixture.config_dir`), que é de onde o modelo do preâmbulo é lido
+por padrão, e o `git` de mentira que registra as chamadas
+(`fixture.trace_git`). Chame `fixture.cleanup()` num `after_each`: é ele que
+devolve `XDG_DATA_HOME`, `XDG_CONFIG_HOME` e `PATH` ao que eram. O repositório
+do fixture também é lido de volta, que é como se afirma sobre o disco depois de
+uma ação: `repo:read` e `repo:exists`.
 
 `tests/helpers/panel.lua` lê o painel como o revisor o vê: acha a janela pelo
 filetype, devolve as linhas renderizadas (`panel.lines`), as entradas de uma
@@ -380,6 +387,14 @@ não perguntou nada (`confirm.prompts` vazio), que a entrada diz só o ponto
 (`input.defaults`, `entry.lines`) e o tipo e o texto que ficaram gravados no
 documento de estado depois do que o revisor escreveu (`input.answer`,
 `entry.type`).
+
+O preâmbulo num arquivo de modelo (`nvi-01m2723wvpey`) não trouxe item novo: o
+teste grava o modelo num diretório temporário e aponta `preamble_template` para
+ele pelo `setup`, como faz com `report_directory`, ou o grava sob o diretório de
+configuração do próprio teste (`fixture.config_dir`) para afirmar o caminho
+padrão. O que se afirma é o preâmbulo lido de volta dos dois formatos
+(`report.instructions`): os marcadores preenchidos, o desconhecido como está e o
+embutido sem arquivo.
 
 `tests/helpers/menu.lua` lê o menu de contexto do editor: `menu.entries()` devolve
 as entradas na ordem em que aparecem, `menu.actions()` só as que têm ação e

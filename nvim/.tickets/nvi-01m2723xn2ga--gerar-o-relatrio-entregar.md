@@ -6,7 +6,7 @@ type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:05.625295942Z'
-updated: '2026-09-11T01:43:05.763888392Z'
+updated: '2026-09-11T13:15:04.860234298Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -44,3 +44,13 @@ Veja a spec: "Entrega" (57–60, 62–66) e as decisões "Documento de estado", 
 ## Blocked by
 
 - nvi-01m2723w2zb5
+
+## Notes
+
+**2026-09-11T13:12:58.649633955Z**
+
+Decidir junto com a entrega: o modelo do preâmbulo (nvi-01m2723wvpey) é lido do arquivo a cada geração, em generate, e passado ao render como argumento. Se o revisor editar review/preamble.md entre uma entrega e o refazer dela, o preâmbulo refeito sai com o texto novo, enquanto cabeçalho e itens saem congelados. A história 59 fala das linhas e dos trechos do momento da geração; congelar também o preâmbulo renderizado (ou o texto do modelo) na entrega é a alternativa, se refazer tiver de reproduzir o documento byte a byte.
+
+**2026-09-11T13:15:04.860234298Z**
+
+Correção da nota anterior: o texto do modelo do preâmbulo agora é lido em build e viaja no próprio relatório (ReviewReport.template), e o render lê só o relatório. Congelar o relatório inteiro na entrega congela também o modelo, e o refazer reproduz o preâmbulo do momento da geração; deixar o template de fora do congelado é o que faria o refazer seguir o arquivo atual.

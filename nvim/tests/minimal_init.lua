@@ -26,6 +26,13 @@ for _, name in ipairs { "plenary.nvim", "astrocore", "mini.icons" } do
   plugins[#plugins + 1] = path
 end
 
+-- The configuration directory of the editor is where the template of the
+-- report's preamble is read from by default, and the real one is this very
+-- repository. A template the reviewer keeps there would change what every
+-- report of the suite says. Nothing is created in it; a test that wants a
+-- template there asks for a directory of its own (`fixture.config_dir`).
+vim.env.XDG_CONFIG_HOME = vim.fn.tempname() .. "-config"
+
 vim.opt.runtimepath = vim.list_extend({ vim.env.VIMRUNTIME, config_root }, plugins)
 vim.opt.packpath = {}
 vim.opt.swapfile = false

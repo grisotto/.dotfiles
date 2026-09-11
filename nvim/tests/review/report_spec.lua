@@ -639,6 +639,125 @@ describe("relatório de revisão", function()
     end)
   end)
 
+  describe("preâmbulo", function()
+    ---Write a template of the preamble, the way the reviewer keeps one.
+    ---@param path string
+    ---@param lines string[]
+    local function write_template(path, lines)
+      vim.fn.mkdir(vim.fs.dirname(path), "p")
+      assert(vim.fn.writefile(lines, path) == 0, "could not write " .. path)
+    end
+
+    -- A instrução do tipo vem da configuração, para o texto esperado ser o do
+    -- próprio teste.
+    local ISSUE = { { name = "issue", instruction = "corrija." } }
+
+    it("preenche {types}, {reference} e {not_found} no modelo configurado, nos dois formatos", function()
+      local template = fixture.plain_dir() .. "/preambulo.md"
+      write_template(template, {
+        "Revise só o que eu pedi.",
+        "",
+        "{types}",
+        "",
+        "{reference}",
+        "",
+        "{not_found}",
+        "",
+        "Até a volta.",
+      })
+      review.setup { preamble_template = template, annotation_types = ISSUE }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "arrumar isso")
+      -- A linha anotada some: só com um trecho não encontrado o {not_found} tem
+      -- o que dizer.
+      repo:write("a.txt", "um\noutra coisa no lugar\ntrês\n")
+      panel.feed "R"
+      panel.feed "M"
+
+      local instructions = report.instructions "xml"
+      assert.equals(instructions, report.instructions "markdown")
+      local lines = vim.split(instructions, "\n", { plain = true })
+      assert.equals(9, #lines, instructions)
+      assert.equals("Revise só o que eu pedi.", lines[1])
+      assert.equals("- `issue`: corrija.", lines[3])
+      assert.equals("As linhas citadas são do arquivo como está no disco agora.", lines[5])
+      assert.is_truthy(lines[7]:find("trecho não encontrado", 1, true), lines[7])
+      assert.equals("Até a volta.", lines[9])
+    end)
+
+    it("deixa como está o marcador que não conhece, e não põe o que o modelo não pede", function()
+      local template = fixture.plain_dir() .. "/preambulo.md"
+      write_template(template, { "Olá, {agente}.", "", "{types}", "", "{not_found}", "", "Responda por id." })
+      review.setup { preamble_template = template, annotation_types = ISSUE }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "arrumar isso")
+      panel.feed "R"
+      panel.feed "M"
+
+      -- Sem {reference} no modelo, a referência não aparece; o {not_found} vazio
+      -- não deixa linha em branco a mais.
+      local expected = "Olá, {agente}.\n\n- `issue`: corrija.\n\nResponda por id."
+      assert.equals(expected, report.instructions "xml")
+      assert.equals(expected, report.instructions "markdown")
+    end)
+
+    it("lê o modelo de review/preamble.md no diretório de configuração do editor", function()
+      local config = fixture.config_dir()
+      -- O caminho que o README promete, e não o que o plugin calcula.
+      write_template(config .. "/nvim/review/preamble.md", { "Do diretório de configuração.", "{types}" })
+      review.setup { annotation_types = ISSUE }
+      local repo = repo_with_a_change()
+
+      open_in(repo.root)
+      annotate_line("Unstaged", "a%.txt", 2, "arrumar isso")
+      panel.feed "R"
+      panel.feed "M"
+
+      local expected = "Do diretório de configuração.\n- `issue`: corrija."
+      assert.equals(expected, report.instructions "xml")
+      assert.equals(expected, report.instructions "markdown")
+    end)
+
+    it("sem o arquivo de modelo, usa o preâmbulo embutido", function()
+      -- Nem no caminho padrão, com o diretório de configuração vazio, nem no
+      -- caminho que o revisor deu.
+      fixture.config_dir()
+      for _, options in ipairs { {}, { preamble_template = fixture.plain_dir() .. "/nao-existe.md" } } do
+        -- Um diretório de dados por caso: o relatório é lido de volta varrendo
+        -- o diretório, e o do caso anterior estaria lá.
+        fixture.data_dir()
+        review.setup(options)
+        local repo = repo_with_a_change()
+
+        open_in(repo.root)
+        annotate_line("Unstaged", "a%.txt", 2, "arrumar isso")
+        panel.feed "R"
+        panel.feed "M"
+
+        for _, format in ipairs { "xml", "markdown" } do
+          local instructions = report.instructions(format)
+          for _, wanted in ipairs { "revisão humana", "- `issue`: corrija o problema apontado.", "Não faça commit" } do
+            assert.is_truthy(
+              instructions:find(wanted, 1, true),
+              ("o preâmbulo em %s com %s não diz %q:\n%s"):format(format, vim.inspect(options), wanted, instructions)
+            )
+          end
+        end
+      end
+    end)
+
+    it("recusa um caminho de modelo relativo", function()
+      -- Relativo seria resolvido a partir do diretório do editor, que na revisão
+      -- é o repositório revisado: o modelo mudaria de repositório para
+      -- repositório sem o revisor saber.
+      assert.has_error(function() review.setup { preamble_template = "preambulo.md" } end)
+    end)
+  end)
+
   describe("quickfix", function()
     it("recebe os pontos anotados com o id e o tipo, e abre para o revisor percorrê-los", function()
       -- O `#id type` é o que liga o ponto da lista à linha de resposta do agente.

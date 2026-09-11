@@ -64,6 +64,7 @@ local M = {}
 ---@field close_on_diff boolean whether going into the diff of a line takes the panel off the screen
 ---@field neo_tree "close"|"ignore" what to do with a neo-tree window in the way
 ---@field report_directory string|nil where the review report is written
+---@field preamble_template string|nil the file the preamble of the report is written from
 ---@field annotation_types ReviewAnnotationType[] types added to the built-in ones, or replacing the instruction of one
 ---@field annotation_type_entry "select"|"prefix" where the type of an annotation is given: a selector before the text, or a prefix written in it
 ---@field mappings ReviewMappings
@@ -97,6 +98,13 @@ local defaults = {
   -- follows the data directory of the editor that is running instead of the
   -- one that was running when the options were read.
   report_directory = nil,
+  -- The file the preamble of the report is written from, as an absolute path:
+  -- the text the agent reads before the items, with `{types}`, `{reference}`
+  -- and `{not_found}` where the report fills them in. Absent, it is
+  -- `review/preamble.md` under the editor's configuration directory, resolved
+  -- when the report is generated for the same reason as the report directory;
+  -- and with no file there either, the preamble built into the report.
+  preamble_template = nil,
   -- Both presentations of a seen file are meant to be tried in use: the
   -- section of its own at the end, which leaves only what is left on the list,
   -- and the dimming in place, which keeps the file where it is.
@@ -298,6 +306,20 @@ local function validate(options)
       error(("review: report_directory must be an absolute path, got %q"):format(options.report_directory))
     end
   end
+  -- Absolute for the same reason as the report directory: a relative path is
+  -- resolved from the editor's current directory, the repository being
+  -- reviewed, and the preamble would change from one repository to the next
+  -- without the reviewer having written a word of it.
+  if options.preamble_template ~= nil then
+    if type(options.preamble_template) ~= "string" or options.preamble_template == "" then
+      error(
+        ("review: preamble_template must be a non-empty string, got %s"):format(tostring(options.preamble_template))
+      )
+    end
+    if not vim.startswith(options.preamble_template, "/") then
+      error(("review: preamble_template must be an absolute path, got %q"):format(options.preamble_template))
+    end
+  end
   -- A type is a word the report writes as it is — in an attribute of the XML,
   -- in a heading of the markdown, at the start of a line of the quickfix, and
   -- in front of the text when it is given by prefix, whose pattern in the
@@ -347,6 +369,9 @@ function M.setup(opts)
   -- home, and what the report writes into is the directory it stands for.
   if type(options.report_directory) == "string" then
     options.report_directory = vim.fs.normalize(options.report_directory)
+  end
+  if type(options.preamble_template) == "string" then
+    options.preamble_template = vim.fs.normalize(options.preamble_template)
   end
   validate(options)
   M.options = options

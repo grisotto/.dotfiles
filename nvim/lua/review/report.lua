@@ -60,6 +60,7 @@ local M = {}
 ---@class ReviewReport everything a format renders, and nothing it has to look up
 ---@field header ReviewReportHeader
 ---@field items ReviewReportItem[]
+---@field template string the template of its preamble, with the markers still in it
 
 ---@class ReviewPlacement one annotation, in the file as it is now
 ---@field annotation ReviewAnnotation
@@ -234,28 +235,9 @@ local function reference_of(repository, mode)
   return commit and ("HEAD %s"):format(commit.sha) or "HEAD (no commits yet)"
 end
 
----Build the report of a review: the items, placed in the file as it is now, and
----the header. Nil when the review has no annotation, which is no report.
----@param repository string absolute path of the repository root
----@param mode ReviewMode
----@return ReviewReport|nil
-local function build(repository, mode)
-  local placements = place(repository, annotation.of_mode(repository, mode))
-  if #placements == 0 then return nil end
-  table.sort(placements, reads_before)
-
-  return {
-    header = {
-      root = repository,
-      branch = git.branch(repository) or "(detached)",
-      reference = reference_of(repository, mode),
-    },
-    items = items_of(placements),
-  }
-end
-
 ---The preamble the agent reads before the items, with its markers — `{types}`,
----`{reference}` and `{not_found}` — filled in from the report.
+---`{reference}` and `{not_found}` — filled in from the report. Built in, for
+---the reviewer who keeps no template of their own.
 local PREAMBLE = [[
 Esta é a revisão humana de uma mudança que você fez neste repositório. Cada
 anotação abaixo é um pedido sobre um ponto do código, identificado por um id.
@@ -272,6 +254,41 @@ O que cada tipo pede:
 - Não faça commit: a mudança vai ser validada antes.
 - Ao terminar, responda com uma linha por id: `feito`, `respondido` ou
   `recusado: motivo`.]]
+
+---Read the template the preamble is written from: the file the reviewer keeps
+---it in — the one the options name, or `review/preamble.md` under the editor's
+---configuration directory — and the one built in when there is no such file.
+---Read at every generation, so an edit to it is in the next report without the
+---editor being restarted.
+---@return string
+local function read_preamble_template()
+  local path = config.options.preamble_template or (vim.fn.stdpath "config" .. "/review/preamble.md")
+  if vim.fn.filereadable(path) == 1 then return table.concat(vim.fn.readfile(path), "\n") end
+  return PREAMBLE
+end
+
+---Build the report of a review: the items, placed in the file as it is now, the
+---header, and the template of the preamble — read here, with everything else a
+---format renders, so rendering reads nothing but the report. Nil when the
+---review has no annotation, which is no report.
+---@param repository string absolute path of the repository root
+---@param mode ReviewMode
+---@return ReviewReport|nil
+local function build(repository, mode)
+  local placements = place(repository, annotation.of_mode(repository, mode))
+  if #placements == 0 then return nil end
+  table.sort(placements, reads_before)
+
+  return {
+    header = {
+      root = repository,
+      branch = git.branch(repository) or "(detached)",
+      reference = reference_of(repository, mode),
+    },
+    items = items_of(placements),
+    template = read_preamble_template(),
+  }
+end
 
 ---@param items ReviewReportItem[]
 ---@return string the instruction of each type used, one per line, in the
@@ -304,7 +321,9 @@ local function not_found_rule(items)
 end
 
 ---The preamble of a report, in lines. A marker that is filled with nothing
----leaves no blank line behind, and one that is not a marker stays as it is.
+---leaves no blank line behind, one the template leaves out is simply not
+---there, and one that is not a marker stays as it is: a template of the
+---reviewer's never breaks the generation.
 ---@param report ReviewReport
 ---@return string[]
 local function preamble(report)
@@ -313,7 +332,7 @@ local function preamble(report)
     reference = "As linhas citadas são do arquivo como está no disco agora.",
     not_found = not_found_rule(report.items),
   }
-  local text = PREAMBLE:gsub("{([%w_]+)}", values)
+  local text = report.template:gsub("{([%w_]+)}", values)
 
   local lines = {}
   for _, line in ipairs(vim.split(text, "\n", { plain = true })) do

@@ -1,12 +1,13 @@
 ---
 id: nvi-01m2723wvpey
 title: Preâmbulo num arquivo de modelo
-status: open
+status: closed
 type: task
 priority: 2
 mode: afk
 created: '2026-09-11T01:43:04.814925062Z'
-updated: '2026-09-11T01:43:04.945635752Z'
+updated: '2026-09-11T13:16:11.056838850Z'
+closed: '2026-09-11T13:16:11.056838850Z'
 assignee: grisotto
 parent: nvi-01m271x0rry4
 tags:
@@ -14,11 +15,11 @@ tags:
 - review
 acceptance:
 - title: Opção com o caminho do modelo, padrão sob o diretório de configuração
-  done: false
+  done: true
 - title: '{types}, {reference} e {not_found} são substituídos nos dois formatos'
-  done: false
+  done: true
 - title: Marcador desconhecido fica literal e sem arquivo vale o preâmbulo embutido
-  done: false
+  done: true
 deps:
 - nvi-01m2723w2zb5
 ---
@@ -36,3 +37,9 @@ Veja a spec: histórias 21–24 e a decisão "Preâmbulo".
 ## Blocked by
 
 - nvi-01m2723w2zb5
+
+## Notes
+
+**2026-09-11T13:16:11.056838850Z**
+
+Opção preamble_template (padrão review/preamble.md sob o diretório de configuração), marcadores {types}, {reference} e {not_found} nos dois formatos, marcador desconhecido literal e preâmbulo embutido sem arquivo.

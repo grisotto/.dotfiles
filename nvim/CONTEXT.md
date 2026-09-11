@@ -108,8 +108,18 @@ _Avoid_: lido, revisado, checado, resolvido
 **Anotação**:
 Um texto que o revisor escreve sobre um ponto do código, preso a um arquivo e
 opcionalmente a uma linha ou a um trecho. É observação de revisão, não
-comentário de código.
+comentário de código. É escrita sobre o lado de depois da mudança — o que o
+commit, o índice ou o arquivo passou a ter —, e nunca sobre o que foi removido.
 _Avoid_: comentário, review comment, TODO
+
+**Tipo da anotação**:
+O que o revisor pede ao agente com uma anotação: corrigir (`issue`), refatorar
+sem mudar comportamento (`refactor`), criar ou ajustar teste (`test`), desfazer
+a mudança (`revert`), responder sem tocar no código (`question`), avaliar e
+aplicar ou recusar (`suggestion`), um ajuste trivial (`nitpick`), ou manter como
+está (`praise`). Toda anotação tem um, e sem escolha é `issue`. Os nomes são os
+do Conventional Comments, e o revisor pode acrescentar outros.
+_Avoid_: categoria, label, severidade, rótulo
 
 **Anotação de arquivo**:
 Anotação presa ao arquivo inteiro, sem linha.
@@ -120,8 +130,10 @@ ponto diferente da primeira linha dele; um trecho de uma linha é aquela linha.
 _Avoid_: range, bloco, seleção
 
 **Ponto**:
-Onde uma anotação se prende: o arquivo, o modo, e a linha ou o trecho quando
-houver. Dois textos escritos no mesmo ponto são um só, corrigido.
+Onde uma anotação se prende: o arquivo, o modo, a versão em que a linha foi lida
+— o arquivo no disco, o índice ou o commit — e a linha ou o trecho quando houver.
+A linha 5 do índice e a linha 5 do disco são pontos diferentes, porque são linhas
+diferentes. Dois textos escritos no mesmo ponto são um só, corrigido.
 _Avoid_: local, posição, alvo
 
 **Entrada da anotação**:
@@ -140,18 +152,40 @@ _Avoid_: contexto, snippet
 **Reancoragem**:
 Procurar a âncora no arquivo e prender a anotação à linha em que ela está agora.
 Acontece na geração do relatório, que é o único momento em que a linha guardada
-é confrontada com o arquivo.
+é confrontada com o arquivo. Só é reancorada a anotação escrita sobre o que ainda
+muda depois dela; a de um commit fica na linha em que foi escrita, porque o
+commit não muda, e é pelo commit que o agente a encontra.
 _Avoid_: realocação, remapeamento
 
 **Anotação deslocada**:
 Anotação cuja âncora não foi encontrada no arquivo. Ela não é descartada: é
-entregue marcada, para o revisor decidir.
+entregue marcada, para o revisor decidir. Só uma anotação que é reancorada pode
+ficar deslocada.
 _Avoid_: anotação órfã, quebrada, inválida
 
+**Anotação aberta**:
+Anotação que ainda não saiu em relatório nenhum. É o que o próximo relatório do
+modo leva, e o que a contagem do painel conta.
+_Avoid_: pendente, nova, rascunho
+
+**Anotação entregue**:
+Anotação que já saiu num relatório. Não volta num relatório novo: depois da
+entrega o agente mexeu no código, e anotar de novo o mesmo ponto é um pedido
+novo, e não a correção do anterior.
+_Avoid_: enviada, resolvida, fechada
+
+**Entrega**:
+As anotações abertas de um modo que saíram juntas num relatório. Gerar o
+relatório é entregar; gerar sem nenhuma anotação aberta refaz a última entrega, e
+a última entrega pode ser reaberta — para quando o relatório foi gerado e não foi
+mandado. As entregas ficam guardadas.
+_Avoid_: rodada, lote, envio
+
 **Relatório de revisão**:
-O documento gerado a partir das anotações de um modo, feito para sair do editor
-(colar em PR, ticket, mensagem) — por isso gerá-lo também o põe na área de
-transferência.
+O documento gerado a partir das anotações abertas de um modo, feito para ser
+entregue ao agente de IA que fez a mudança revisada — por isso gerá-lo também o põe na área
+de transferência, de onde é colado na conversa com ele. É escrito para o agente
+entender e agir, e não para ser lido por gente num PR.
 _Avoid_: export, dump, relatório
 
 **Raiz do projeto**:

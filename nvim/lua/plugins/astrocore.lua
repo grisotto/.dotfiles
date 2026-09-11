@@ -142,7 +142,9 @@ return {
         ["gm"] = { desc = "Multiple Cursors" },
 
         -- `<C-Up>`/`<C-Down>` não aparecem aqui de propósito, e o
-        -- `:checkhealth astrocore` avisa de uma colisão nelas que não é nossa:
+        -- `:checkhealth astrocore` às vezes avisa de uma colisão nelas que não
+        -- é nossa — às vezes, não sempre: medido, apareceu em 2 de 8 partidas.
+        -- Uma partida limpa não quer dizer que acabou. A colisão é:
         -- o astrocommunity escreve `<C-up>` (cursor múltiplo) e o smart-splits
         -- do AstroNvim escreve `<C-Up>` (redimensionar split) na mesma tabela.
         -- Quem ganha é o cursor múltiplo, porque o Visual-Multi reescreve as

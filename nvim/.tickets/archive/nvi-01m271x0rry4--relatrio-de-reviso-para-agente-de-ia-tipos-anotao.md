@@ -1,12 +1,13 @@
 ---
 id: nvi-01m271x0rry4
 title: 'Relatório de revisão para agente de IA: tipos, anotação no commit e entrega'
-status: open
+status: closed
 type: feature
 priority: 2
 mode: afk
 created: '2026-09-11T01:39:19.448011637Z'
-updated: '2026-09-11T23:12:37.324425094Z'
+updated: '2026-09-11T23:25:05.188194047Z'
+closed: '2026-09-11T23:25:05.188194047Z'
 assignee: grisotto
 parent: nvi-01m1d6164sz2
 tags:
@@ -14,21 +15,23 @@ tags:
 - review
 acceptance:
 - title: R gera o relatório em XML e M em markdown, com os mesmos itens, ids e preâmbulo
-  done: false
+  done: true
 - title: Preâmbulo vem de arquivo de modelo com {types}, {reference} e {not_found}, com padrão embutido
-  done: false
+  done: true
 - title: Toda anotação tem tipo (8 padrão, issue sem escolha, extras configuráveis), escolhido no seletor ou por prefixo
-  done: false
+  done: true
 - title: Anotação aceita no lado de depois de unstaged, staged, commit e intervalo; recusada no lado de antes e no arquivo de hoje em modo commit
-  done: false
+  done: true
 - title: Anotação de commit cita a linha e o código do commit; working tree e staged são reancorados no disco
-  done: false
+  done: true
 - title: 'Quickfix com #id type, reancorada no disco, item sem linha quando não achado'
-  done: false
+  done: true
 - title: Gerar entrega as abertas; gerar sem abertas refaz a última entrega congelada; U reabre a última
   done: true
 - title: Contagem do painel conta só abertas; anotações antigas continuam válidas sem perder vistos
   done: true
+external_refs:
+- git:8eaefe9
 ---
 
 ## Problem Statement
@@ -184,3 +187,9 @@ Gerar o relatório é entregar (ADR-0012): as anotações abertas do modo saem n
 - Decisões tomadas na escrita da spec, sem discussão com o revisor, e que podem ser revistas: a anotação de arquivo inteiro não guarda versão; reabrir é recusado quando colide com uma anotação aberta no mesmo ponto; texto e código vão crus no XML; a versão do documento de estado não é incrementada.
 - Referências da pesquisa de formato: Conventional Comments (conventionalcomments.org) para os tipos; a API de comentários de review do GitHub (`path`, `line`, `start_line`, `side`, `commit_id`) para a localização; a documentação de prompting da Anthropic sobre tags XML; o "Prompt for AI Agents" do CodeRabbit e o extrator `obra/coderabbit-review-helper` como prior art de relatório de review para agente.
 - Os tickets de relatório e de anotação da fase 2 (`nvi-01m1d6hx1mma`, `nvi-01m1d6hwxd9p`) e o de modo commit (`nvi-01m1d6hxabg5`) descrevem o comportamento que esta spec substitui em parte.
+
+## Notes
+
+**2026-09-11T23:25:05.188194047Z**
+
+O relatório de revisão passou a ser escrito para o agente de IA que fez a mudança. R gera em tags XML e M em markdown, com os mesmos itens, ids e preâmbulo; o preâmbulo vem de um arquivo de modelo com {types}, {reference} e {not_found}, e o embutido vale sem arquivo. Toda anotação tem tipo — os oito do Conventional Comments, issue por padrão, extras e instruções configuráveis —, escolhido no seletor ou escrito como prefixo. A anotação é aceita no lado de depois de unstaged, staged, commit e intervalo, e recusada no lado de antes e no arquivo de hoje em modo commit; a de commit fica presa à linha do commit (ADR-0011) e a do índice é reancorada no disco. A quickfix leva #id type, reancorada no disco na hora. Gerar é entregar (ADR-0012): as abertas do modo saem no relatório e passam a entregues, gerar sem abertas refaz a última entrega congelada, e U reabre a última, recusando quando o ponto já tem anotação aberta. A contagem do painel conta só as abertas. Oito tickets filhos, de b33b376 a 8eaefe9; README, CONTEXT.md, ADR-0011 e ADR-0012 e as atualizações dos ADR-0003 e 0006 acompanham. Suíte em 433 specs, make lint com 0 erros e 0 avisos.

@@ -1,5 +1,5 @@
 return {
-  "Saghen/blink.cmp",
+  "saghen/blink.cmp",
   optional = true,
   dependencies = {
     -- add the legacy cmp source as a dependency for `blink.cmp`
@@ -7,7 +7,7 @@ return {
   },
   specs = {
     -- install the blink, nvim-cmp compatibility layer
-    { "Saghen/blink.compat", version = "*", lazy = true, opts = {} },
+    { "saghen/blink.compat", version = "*", lazy = true, opts = {} },
   },
   opts = {
     sources = {

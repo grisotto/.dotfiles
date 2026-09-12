@@ -1,12 +1,13 @@
 ---
 id: nvi-01m29dpynmtf
 title: Anotação no diff vai para o modo errado quando a lista sai da tela
-status: in_progress
+status: closed
 type: bug
 priority: 1
 mode: afk
 created: '2026-09-11T23:44:12.468702503Z'
-updated: '2026-09-11T23:51:17.713511549Z'
+updated: '2026-09-12T00:18:08.187415168Z'
+closed: '2026-09-12T00:18:08.187415168Z'
 assignee: grisotto
 tags:
 - git
@@ -25,6 +26,8 @@ acceptance:
   done: true
 links:
 - nvi-01m1d6164sz2
+external_refs:
+- git:fb972f08191cc1361e157dafd54faa249f88892f
 ---
 
 ## Description
@@ -87,3 +90,7 @@ O que mudou, em `lua/review/panel.lua`: um `reviewing()` responde qual painel de
 Uma armadilha no caminho, que a suíte pegou: escrever esse fallback como `win and entry_by_line[...] or diff.showing()` quebra 38 specs — num cabeçalho o índice é nil e a expressão cai no `or`, fazendo a tecla agir sobre o arquivo ao lado a partir de uma linha de que o revisor saiu de propósito. Ficou um `if` escrito por extenso, com o comentário do porquê.
 
 Suíte em 439 specs (eram 433; 6 novos em tests/review/close_on_diff_spec.lua), make lint 0 erros e 0 avisos. ADR-0009 ganhou a atualização "o modo e o repositório também são do painel que saiu da tela".
+
+**2026-09-12T00:18:08.187415168Z**
+
+O modo e o repositório passam a vir do painel que o diff tirou da tela: a anotação escrita no lado de depois do diff de um commit fica no modo daquele commit, e o R a leva no relatório. O <Leader>gv volta a marcar como visto e abrir a próxima com a lista fora da tela, e o arquivo de hoje aberto com go continua recusado. A lista fechada sem diff na tela segue não respondendo, que é a razão da restrição. Confirmado com a reprodução headless da configuração real, além dos seis testes novos.

@@ -6,12 +6,14 @@ type: epic
 priority: 1
 mode: afk
 created: '2026-09-01T00:31:15.096596169Z'
-updated: '2026-09-01T00:31:17.871730514Z'
+updated: '2026-09-11T23:46:08.203501044Z'
 assignee: grisotto
 tags:
 - git
 - review
 - plugin-local
+links:
+- nvi-01m29dpynmtf
 ---
 
 ## Description

@@ -240,6 +240,13 @@ fechou por conta própria (`q` no painel, `<Leader>r`) continua fechada, e
 `<Leader>r` a traz a qualquer momento. Por que é opção e não tecla, e por que a
 lista volta depois de o diff sair, estão nas atualizações dos ADRs 0006 e 0009.
 
+Anotar também: o que você escreve no diff com a lista fora da tela é da revisão
+que está na tela. O `<Leader>ga` no lado de depois do diff de um commit grava uma
+anotação **daquele commit**, e é o `R` daquele commit que a leva — não a do
+working tree. Com a lista fechada e nenhum diff na tela não há revisão a que
+prender uma observação, e a anotação num arquivo do repositório volta a ser do
+working tree.
+
 ### Descartar
 
 O que `X` apaga é decidido pela seção da linha, e não pelo arquivo (ADR-0007):

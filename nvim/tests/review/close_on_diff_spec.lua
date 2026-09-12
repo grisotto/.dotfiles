@@ -1,8 +1,14 @@
 local confirm = require "tests.helpers.confirm"
 local diff = require "tests.helpers.diff"
+local document = require "tests.helpers.document"
 local editor = require "tests.helpers.editor"
 local fixture = require "tests.helpers.fixture"
+local graph = require "tests.helpers.graph"
+local input = require "tests.helpers.input"
+local notify = require "tests.helpers.notify"
 local panel = require "tests.helpers.panel"
+local quickfix = require "tests.helpers.quickfix"
+local report = require "tests.helpers.report"
 local review = require "review"
 
 local config_root = vim.fn.getcwd()
@@ -47,12 +53,17 @@ describe("o painel sai da tela quando o revisor entra no diff", function()
   before_each(function()
     review.setup { close_on_diff = true }
     fixture.data_dir()
-    -- A busca do rev é a UI de seleção do editor.
+    -- A busca do rev é a UI de seleção do editor, e o tipo da anotação é pedido
+    -- por ela; o texto vem da UI de entrada.
     confirm.install()
+    input.install()
   end)
 
   after_each(function()
     confirm.restore()
+    input.restore()
+    notify.restore()
+    quickfix.clear()
     editor.reset()
     vim.cmd.cd(vim.fn.fnameescape(config_root))
     fixture.cleanup()
@@ -167,6 +178,160 @@ describe("o painel sai da tela quando o revisor entra no diff", function()
       settle()
 
       assert.is_false(panel.is_open())
+    end)
+  end)
+
+  -- A lista fora da tela não acaba com a revisão: o diff ao lado dela é a
+  -- revisão, e o que se escreve ali é do modo que montou o diff (ADR-0009).
+  describe("a revisão continua sendo a do painel com a lista fora da tela", function()
+    before_each(function()
+      notify.install()
+      -- O `<CR>` do revisor no seletor de tipo de uma anotação nova.
+      confirm.answer_matching "^issue "
+    end)
+
+    ---A repository whose last commit changed a file the disk has moved on from
+    ---since: line 2 of the commit is line 3 of the disk.
+    ---@return FixtureRepo
+    local function repo_with_a_commit_moved_on()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\ndois\ntrês\n", "primeiro")
+      repo:commit_file("a.txt", "um\ndois no commit\ntrês\n", "segundo")
+      repo:write("a.txt", "zero\num\ndois no commit\ntrês\n")
+      return repo
+    end
+
+    ---Entrar no commit pelo grafo e abrir o diff do arquivo, que é o gesto em
+    ---que a lista sai da tela.
+    ---@param repo FixtureRepo
+    local function read_the_commit(repo)
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      panel.focus("Mudanças", "a%.txt")
+      panel.feed "<CR>"
+      until_panel(false)
+    end
+
+    ---Anotar uma linha do lado de depois do diff, que é onde o revisor está
+    ---lendo quando a observação lhe ocorre.
+    ---@param line integer
+    ---@param text string
+    local function annotate_the_after_side(line, text)
+      local win = assert(diff.windows()[2], "o diff não abriu")
+      vim.api.nvim_set_current_win(win)
+      vim.api.nvim_win_set_cursor(win, { line, 0 })
+      input.answer(text)
+      review.annotate()
+    end
+
+    it("anota no modo do commit, e não no do working tree", function()
+      local repo = repo_with_a_commit_moved_on()
+      local sha = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      read_the_commit(repo)
+      annotate_the_after_side(2, "no commit")
+
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("commit-" .. sha, annotations[1].mode)
+      assert.equals(sha, annotations[1].version)
+      assert.equals("dois no commit", annotations[1].anchor)
+    end)
+
+    it("e o relatório do commit leva o que foi anotado assim", function()
+      local repo = repo_with_a_commit_moved_on()
+
+      read_the_commit(repo)
+      annotate_the_after_side(2, "no commit")
+      diff.feed "q"
+      until_panel(true)
+      panel.feed "R"
+
+      local items = report.items "xml"
+      assert.equals(1, #items)
+      assert.equals("a.txt", items[1].file)
+      assert.equals("2", items[1].lines)
+      assert.equals("no commit", items[1].text)
+    end)
+
+    it("anota no modo do intervalo, escolhido no grafo", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "um\ndois\ntrês\n", "primeiro")
+      repo:commit_file("a.txt", "um\ndois do meio\ntrês\n", "segundo")
+      repo:commit_file("a.txt", "um\ndois do fim\ntrês\n", "terceiro")
+      local oldest = vim.trim(repo:git { "rev-parse", "HEAD~1" })
+      local newest = vim.trim(repo:git { "rev-parse", "HEAD" })
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose_range("terceiro", "segundo")
+      panel.focus("Mudanças", "a%.txt")
+      panel.feed "<CR>"
+      until_panel(false)
+      annotate_the_after_side(2, "no intervalo")
+
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals(("range-%s..%s"):format(oldest, newest), annotations[1].mode)
+      assert.equals(newest, annotations[1].version)
+    end)
+
+    it("o arquivo de hoje, aberto com go, continua recusado apontando a volta", function()
+      local repo = repo_with_a_commit_moved_on()
+
+      read_the_commit(repo)
+      diff.feed "go"
+      assert.equals(repo.root .. "/a.txt", vim.api.nvim_buf_get_name(0))
+
+      input.answer "não tem onde prender isto"
+      review.annotate()
+
+      assert.same({}, document.annotations())
+      assert.matches("<C%-o>", notify.last())
+    end)
+
+    it("marca como visto e abre a próxima, com a lista fora da tela", function()
+      local repo = fixture.repo()
+      repo:commit_file("a.txt", "a\n")
+      repo:commit_file("b.txt", "b\n")
+      repo:write("a.txt", "a alterado\n")
+      repo:write("b.txt", "b alterado\n")
+
+      open_in(repo.root)
+      panel.focus("Unstaged", "a%.txt")
+      panel.feed "<CR>"
+      until_panel(false)
+      review.seen_and_next()
+
+      assert.equals("b.txt", diff.reading())
+      diff.feed "q"
+      until_panel(true)
+      assert.equals(1, panel.section_count "Vistos")
+      assert.same({ "M  b.txt" }, panel.section "Unstaged")
+    end)
+
+    it("mas a lista que o revisor fechou, sem diff na tela, não responde pelo modo", function()
+      -- A razão pela qual a restrição existe: com o painel fechado o revisor
+      -- pode ter ido para outro repositório, e o modo dele não vale mais.
+      local repo = repo_with_a_commit_moved_on()
+
+      open_in(repo.root)
+      panel.feed "c"
+      graph.choose "segundo"
+      review.close()
+      settle()
+      assert.same({}, diff.windows())
+
+      vim.cmd.edit(vim.fn.fnameescape(repo.root .. "/a.txt"))
+      vim.api.nvim_win_set_cursor(0, { 1, 0 })
+      input.answer "do disco"
+      review.annotate()
+
+      local annotations = document.annotations()
+      assert.equals(1, #annotations)
+      assert.equals("worktree", annotations[1].mode)
+      assert.equals("disk", annotations[1].version)
     end)
   end)
 

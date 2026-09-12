@@ -166,16 +166,36 @@ end
 ---@return boolean
 function M.is_open() return M.win() ~= nil end
 
+---The panel of this tabpage while it answers for the review under way: the one
+---on screen, and the one whose own diff has the screen in its place.
+---
+---A panel that was closed keeps the root and the mode it read, and answering
+---with those would put a reviewer who has since moved to another repository —
+---the panel closed, `:tcd` elsewhere — in front of a report of the one they
+---left. That is why the list has to be somewhere to answer at all.
+---
+---But a list that left the screen for the diff of one of its own lines did not
+---end the review: the diff *is* the review, and it is where the reviewer is
+---reading when the remark occurs to them (ADR-0009 — the review walks with the
+---list off screen). A remark written there belongs to the mode that built the
+---diff, and a mode read as the working tree would file it under a review the
+---reviewer is not making.
+---
+---Asked of the diff on screen and not only of the flag `close_on_diff` sets:
+---the list the reviewer closed by hand to read a diff with the whole width is
+---the same review, hidden by another gesture.
+---@return ReviewPanelState|nil nil when this tabpage has no review to answer for
+local function reviewing()
+  local panel = current()
+  if not panel then return nil end
+  if M.win() or panel.hidden_for_diff or diff.showing() then return panel end
+end
+
 ---The repository the panel of this tabpage is listing, for the actions that
 ---are about the review as a whole and not about a line of the list.
----
----Only while it is on screen: a panel that was closed keeps the root it read,
----and answering with it would put a reviewer who has since moved to another
----repository — the panel closed, `:tcd` elsewhere — in front of a report of
----the one they left.
----@return string|nil root nil when no panel is showing in this tabpage
+---@return string|nil root nil when no panel answers for a review in this tabpage
 function M.repository()
-  local panel = M.win() and current()
+  local panel = reviewing()
   return panel and panel.root or nil
 end
 
@@ -695,24 +715,43 @@ end
 ---The review the panel of this tabpage is making: the working tree, or the
 ---commit it was switched to.
 ---
----Only while it is on screen, for the same reason `repository` answers only
----then, and so that the two always answer about the same review: with the
----panel closed the repository falls back to the current directory, and a mode
----that went on naming a commit would file a remark about that repository under
----the review of another one.
+---From the same panel `repository` answers from, so that the two always answer
+---about the same review: with no panel answering, the repository falls back to
+---the current directory, and a mode that went on naming a commit would file a
+---remark about that repository under the review of another one.
 ---@return ReviewMode
 function M.mode()
-  local panel = M.win() and current()
+  local panel = reviewing()
   return panel and panel.mode or mode.WORKTREE
 end
 
 ---What the line under the cursor points at, and where it was read from.
+---
+---With the list off screen the review is still somewhere, and it is the line
+---the diff beside it was built from: the one thing the reviewer can see then,
+---and the same answer `step` reads to walk from (ADR-0009). It is what the keys
+---pressed from inside the file being read act on — the list is not there to put
+---a cursor on, and the review did not stop being on a file.
+---
+---With the list on screen the cursor is the only answer, header and blank lines
+---included: a reviewer who moved it off a file is not asking to act on the file
+---that happens to be beside them.
 ---@return ReviewTarget|nil nil on a line that is not a file
 local function target_under_cursor()
   local panel = current()
+  if not panel or not panel.root then return nil end
+
+  -- Written out, and not as `win and ... or ...`: on a header or a blank line
+  -- the cursor answers nothing, and that expression would fall through to the
+  -- diff — the key would act on the file beside the list from a line the
+  -- reviewer moved off on purpose.
   local win = M.win()
-  if not win or not panel or not panel.root then return nil end
-  local entry = panel.entry_by_line[vim.api.nvim_win_get_cursor(win)[1]]
+  local entry
+  if win then
+    entry = panel.entry_by_line[vim.api.nvim_win_get_cursor(win)[1]]
+  else
+    entry = diff.showing()
+  end
   if not entry then return nil end
   return { entry = entry, root = panel.root, panel = win, mode = panel.mode }
 end
@@ -922,7 +961,10 @@ local function seen_and_next(target, opts)
   -- content and not of the path (ADR-0002), so it makes every entry of that
   -- content seen at once, and none of them is a file left to read.
   if marking then seen[target.entry.content] = true end
-  local from = place_under_cursor(panel, vim.api.nvim_win_get_cursor(win)[1])
+  -- Where the review is walking from: the cursor of the list, and — with the
+  -- list off screen — the line the diff was built from, which is the target
+  -- this key was given (ADR-0009).
+  local from = win and place_under_cursor(panel, vim.api.nvim_win_get_cursor(win)[1]) or place_of(panel, target.entry)
   local next_entry = marking and from and neighbour(panel, from, 1, seen) or nil
 
   actions.toggle_seen(target)
@@ -931,7 +973,10 @@ local function seen_and_next(target, opts)
 
   if next_entry and go_to(panel, win, next_entry) then
     if opts.open then open_entry(panel, win, next_entry) end
-  else
+  elseif win then
+    -- The end of the review is written in the header, and the cursor goes there
+    -- to be read. With the list off screen there is no cursor to move: what says
+    -- the review is over is the list itself, when it comes back.
     vim.api.nvim_win_set_cursor(win, { HEADER, 0 })
   end
 end

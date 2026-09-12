@@ -115,3 +115,29 @@ ler com a largura do editor, e fechar o diff não é pedir a lista de novo. E el
 volta depois de o diff sair, e não antes: a última janela do diff fica de pé na
 aba, e o painel abre ao lado dela com a largura dele. Aberto antes, o painel
 ficava sozinho quando o diff fechava as janelas dele, e tomava a tela inteira.
+
+## Atualização: o modo e o repositório também são do painel que saiu da tela
+
+A posição não era a única coisa que a lista levava embora ao sair
+(`nvi-01m29dpynmtf`). O modo da revisão e o repositório dela só eram respondidos
+enquanto a janela do painel estava na tela, e a tecla de anotar apertada dentro
+do diff recebia `worktree` — de um painel que estava revisando um commit. A
+anotação era gravada com o modo do working tree e a versão do commit, um registro
+que se contradiz, e o `R` do commit não a encontrava: *nenhuma anotação nesta
+revisão para relatar*, com a anotação gravada e aberta. Pela mesma raiz, o
+`<Leader>gv` de dentro do diff respondia que a revisão não estava em linha
+nenhuma.
+
+A regra é a mesma da primeira atualização, aplicada ao resto do que o painel
+sabe: com a lista fora da tela mas a revisão nela — o diff de uma linha dela —,
+é o painel daquela aba que responde pelo modo e pelo repositório. O diff *é* a
+revisão enquanto está montado, e é onde o revisor está lendo quando a observação
+lhe ocorre; um modo lido como working tree arquivaria a observação numa revisão
+que ninguém está fazendo.
+
+O limite continua de pé, e é o motivo de a restrição ter existido: a lista
+fechada **sem diff nenhum na tela** não responde por nada. Um painel fechado
+guarda a raiz e o modo que leu, e o revisor pode ter ido para outro repositório
+desde então — `:tcd` noutro lugar, com a lista fechada —, e responder com aquilo
+o poria diante do relatório de uma revisão que ele deixou para trás. O que
+distingue os dois casos é o que está na tela, não o que o painel lembra.
